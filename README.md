@@ -33,6 +33,7 @@ python 01_dynamic_roi_align.py \
   [--output-height OUTPUT_HEIGHT] \
   [--output-width OUTPUT_WIDTH] \
   [--opset-version OPSET_VERSION] \
+  [--onnx-output-path ONNX_OUTPUT_PATH] \
   [--aligned | --no-aligned]
 ```
 
@@ -44,6 +45,7 @@ Option summary:
 - `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
 - `--output-width`: output width behavior. Omitted means dynamic scalar ONNX input (`output_width`), specified integer means fixed output width in graph.
 - `--opset-version`: ONNX opset version (`>= 16`).
+- `--onnx-output-path`: export destination path.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
 
 ### Output size behavior (important)
@@ -111,6 +113,12 @@ python 01_dynamic_roi_align.py --opset-version 18
 
 ```bash
 python 01_dynamic_roi_align.py --aligned
+```
+
+7. Save to custom path:
+
+```bash
+python 01_dynamic_roi_align.py --onnx-output-path out/dynamic_roi_align.onnx
 ```
 
 ## 02_dynamic_roi_align_yolo.py Usage

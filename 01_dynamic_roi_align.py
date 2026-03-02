@@ -5,197 +5,11 @@ allowing different ROI sizes to be processed in a single forward pass.
 """
 
 import argparse
-import torch
+import typing
 import onnx
+import torch
 from onnxsim import simplify
-from typing import Optional, Tuple, cast
-
-class DynamicRoIAlign(torch.nn.Module):
-    """Dynamic ROI Align layer that supports variable output sizes.
-
-    This implementation allows ROI Align to produce outputs of different sizes
-    for each ROI, which is useful for hierarchical segmentation models where
-    different ROIs may require different levels of detail.
-
-    Attributes:
-        spatial_scale (float, tuple, or None): Scale factor to convert ROI coordinates to feature map space.
-            Can be a single float for square images, or a tuple (scale_h, scale_w)
-            for non-square images. If None, use input feature map (H, W) dynamically.
-            For example:
-            - Square: If ROIs are normalized [0,1] and features are 640x640, spatial_scale=640
-            - Non-square: If ROIs are normalized [0,1] and features are 480x640, spatial_scale=(480, 640)
-        sampling_ratio (int): Number of sampling points in each bin. -1 means adaptive.
-            (Note: Currently not used in this implementation)
-        aligned (bool): If True, use pixel-aligned grid_sample. Default is False.
-    """
-
-    def __init__(self, spatial_scale: Optional[Tuple[float, float] | float]=(640, 640), sampling_ratio=-1, aligned=False):
-        """Initialize DynamicRoIAlign module.
-
-        Args:
-            spatial_scale (float, tuple, or None): Scale factor to convert ROI coordinates to feature map space.
-                Can be a single float for square images, or a tuple (scale_h, scale_w)
-                for non-square images. If None, use input feature map (H, W) dynamically.
-                For example:
-                - Square: If ROIs are normalized [0,1] and features are 640x640, spatial_scale=640
-                - Non-square: If ROIs are normalized [0,1] and features are 480x640, spatial_scale=(480, 640)
-            sampling_ratio (int): Number of sampling points per bin. -1 for adaptive.
-                (Currently not implemented in this version)
-            aligned (bool): Whether to use pixel-aligned sampling. This affects how
-                coordinates are normalized for grid_sample.
-        """
-        super().__init__()
-        # Handle None, single value, and tuple for spatial_scale
-        if spatial_scale is None:
-            self.spatial_scale = None
-            self.spatial_scale_h = None
-            self.spatial_scale_w = None
-        elif isinstance(spatial_scale, (list, tuple)):
-            assert len(spatial_scale) == 2, "spatial_scale tuple must have 2 elements (height, width)"
-            self.spatial_scale = spatial_scale
-            self.spatial_scale_h = spatial_scale[0]
-            self.spatial_scale_w = spatial_scale[1]
-        else:
-            self.spatial_scale = spatial_scale
-            self.spatial_scale_h = spatial_scale
-            self.spatial_scale_w = spatial_scale
-        self.sampling_ratio = sampling_ratio
-        self.aligned = aligned
-
-    def forward(self, input_images_or_features: torch.Tensor, rois: torch.Tensor, output_height: Optional[torch.Tensor | int], output_width: Optional[torch.Tensor | int]) -> torch.Tensor:
-        """Perform dynamic ROI Align on input features.
-
-        Args:
-            input_images_or_features (torch.Tensor): Input feature tensor of shape (N, C, H, W)
-                where N is batch size, C is channels,
-                H and W are spatial dimensions.
-            rois (torch.Tensor): ROI tensor of shape (K, 5) where K is number of ROIs.
-                Each ROI is [batch_idx, x1, y1, x2, y2].
-                Coordinates should be in the same space as specified
-                by spatial_scale.
-                All coordinate values must be normalized to the range 0.0 to 1.0.
-            output_height (int or torch.Tensor): Desired output height for aligned features.
-                Can be different for each forward pass.
-            output_width (int or torch.Tensor): Desired output width for aligned features.
-                Can be different for each forward pass.
-
-        Returns:
-            torch.Tensor: Aligned features of shape (K, C, output_height, output_width)
-                where K is the number of ROIs and C matches input channels.
-        """
-        # Extract batch indices and scale ROI coordinates to feature map space
-        batch_indices = rois[:, 0].long()
-
-        if self.spatial_scale is None:
-            spatial_scale_h = input_images_or_features.shape[2]
-            spatial_scale_w = input_images_or_features.shape[3]
-        else:
-            assert self.spatial_scale_h is not None
-            assert self.spatial_scale_w is not None
-            spatial_scale_h = self.spatial_scale_h
-            spatial_scale_w = self.spatial_scale_w
-
-        # Scale x and y coordinates separately for non-square images
-        # rois format: [batch_idx, x1, y1, x2, y2] where x,y are normalized [0,1]
-        x1 = rois[:, 1] * spatial_scale_w
-        y1 = rois[:, 2] * spatial_scale_h
-        x2 = rois[:, 3] * spatial_scale_w
-        y2 = rois[:, 4] * spatial_scale_h
-
-        # Stack back into boxes tensor
-        boxes = torch.stack([x1, y1, x2, y2], dim=1)
-
-        # ROI dimensions are already computed
-        roi_width = x2 - x1
-        roi_height = y2 - y1
-
-        # Generate a grid for each ROI
-        # This part is vectorized to avoid Python loops over ROIs
-
-        # Create normalized coordinates [0, 1] for output grid points.
-        # Keep output_height/output_width as tensors to preserve dynamic ONNX behavior.
-        if isinstance(output_width, (list, tuple)):
-            output_width = output_width[0] if len(output_width) > 0 else output_width
-        if isinstance(output_height, (list, tuple)):
-            output_height = output_height[0] if len(output_height) > 0 else output_height
-        if not torch.is_tensor(output_width):
-            output_width = torch.tensor(output_width, dtype=torch.int64, device=rois.device)
-        else:
-            output_width = output_width.to(dtype=torch.int64, device=rois.device).reshape(())
-        if not torch.is_tensor(output_height):
-            output_height = torch.tensor(output_height, dtype=torch.int64, device=rois.device)
-        else:
-            output_height = output_height.to(dtype=torch.int64, device=rois.device).reshape(())
-
-        output_width_f = output_width.to(dtype=rois.dtype)
-        output_height_f = output_height.to(dtype=rois.dtype)
-
-        # `arange` accepts tensor scalar end at runtime/export time, but type stubs
-        # declare numeric scalars. Cast here is for static type checkers only.
-        x_indices = torch.arange(cast(int, output_width), device=rois.device, dtype=rois.dtype)
-        y_indices = torch.arange(cast(int, output_height), device=rois.device, dtype=rois.dtype)
-
-        # Match linspace(0, 1, n) while keeping n dynamic.
-        x_denominator = torch.clamp(output_width_f - 1, min=1)
-        y_denominator = torch.clamp(output_height_f - 1, min=1)
-        x_coords_normalized = x_indices / x_denominator
-        y_coords_normalized = y_indices / y_denominator
-
-        # Create 2D grid of normalized coordinates
-        # grid_y, grid_x shape: (output_height, output_width)
-        grid_y, grid_x = torch.meshgrid(y_coords_normalized, x_coords_normalized, indexing='ij')
-
-        # Calculate coordinates in feature map space for each bin center
-        # The +0.5 offset centers the sampling point within each bin
-        # fx = x1 + (grid_x + 0.5) * bin_width
-        # fy = y1 + (grid_y + 0.5) * bin_height
-
-        # Note: bin dimensions are implicitly handled by the grid normalization
-        # Each output pixel samples from the corresponding portion of the ROI
-
-        # Calculate actual feature map coordinates for each sampling point
-        # The grid already represents positions from 0 to 1 within the ROI
-        # Shape: (num_rois, output_height, output_width)
-        # Broadcasting handles [num_rois, 1, 1] with [output_height, output_width].
-        fx = x1.unsqueeze(1).unsqueeze(2) + grid_x * roi_width.unsqueeze(1).unsqueeze(2)
-        fy = y1.unsqueeze(1).unsqueeze(2) + grid_y * roi_height.unsqueeze(1).unsqueeze(2)
-
-        # Normalize coordinates to [-1, 1] range required by grid_sample
-        # grid_sample expects -1 for top-left corner and 1 for bottom-right
-        H_feat, W_feat = input_images_or_features.shape[2], input_images_or_features.shape[3]
-        if self.aligned:
-            # When align_corners=True, corners map to corners
-            normalized_fx = (fx / (W_feat - 1)) * 2 - 1
-            normalized_fy = (fy / (H_feat - 1)) * 2 - 1
-        else:
-            # When align_corners=False, pixel centers are used
-            normalized_fx = (fx / W_feat) * 2 - 1
-            normalized_fy = (fy / H_feat) * 2 - 1
-
-        # Stack x and y coordinates to form sampling grid
-        # Shape: (num_rois, output_height, output_width, 2)
-        # Last dimension contains [x, y] coordinates for each sampling point
-        grids_tensor = torch.stack([normalized_fx, normalized_fy], dim=-1)
-
-        # Select the appropriate feature map for each ROI based on its batch index
-        # This handles ROIs from different images in the batch
-        # Shape: (num_rois, C, H, W)
-        selected_feature_maps = torch.index_select(input_images_or_features, 0, batch_indices)
-
-        # Apply bilinear interpolation to sample features at grid points
-        # grid_sample performs differentiable bilinear interpolation
-        # Input: (num_rois, C, H_feat, W_feat)
-        # Grid: (num_rois, output_height, output_width, 2)
-        # Output: (num_rois, C, output_height, output_width)
-        pooled_features = torch.nn.functional.grid_sample(
-            selected_feature_maps,
-            grids_tensor,
-            mode='bilinear',  # Use bilinear interpolation for smooth gradients
-            padding_mode='zeros',  # Pad with zeros outside feature map boundaries
-            align_corners=self.aligned  # Controls pixel alignment behavior
-        )
-
-        return pooled_features
+from dynamic_roi_align_core import DynamicRoIAlign
 
 
 if __name__ == '__main__':
@@ -241,6 +55,12 @@ if __name__ == '__main__':
         type=int,
         default=17,
         help="ONNX opset version for export (must be >= 16). Default: 17.",
+    )
+    parser.add_argument(
+        "--onnx-output-path",
+        type=str,
+        default="dynamic_roi_align.onnx",
+        help="Export destination ONNX path.",
     )
     aligned_group = parser.add_mutually_exclusive_group()
     aligned_group.add_argument(
@@ -306,7 +126,10 @@ if __name__ == '__main__':
     # Create and test the module
     # When spatial_scale_arg is None, DynamicRoIAlign uses input_images_or_features H/W dynamically.
     roi_align_module = DynamicRoIAlign(spatial_scale=spatial_scale_arg, aligned=args.aligned)
-    output = roi_align_module.forward(input_images_or_features, rois, output_height, output_width)
+    output = typing.cast(
+        torch.Tensor,
+        roi_align_module(input_images_or_features, rois, output_height, output_width),
+    )
 
     print("Output shape:", output.shape)
     print(
@@ -363,7 +186,10 @@ if __name__ == '__main__':
                 self.fixed_width = fixed_width
 
             def forward(self, input_images_or_features: torch.Tensor, rois: torch.Tensor, output_height: torch.Tensor) -> torch.Tensor:
-                return self.module(input_images_or_features, rois, output_height, self.fixed_width)
+                return typing.cast(
+                    torch.Tensor,
+                    self.module(input_images_or_features, rois, output_height, self.fixed_width),
+                )
 
         export_module = ExportFixedWidth(roi_align_module, output_width)
         export_args = (input_images_or_features, rois, torch.tensor(output_height))
@@ -378,7 +204,10 @@ if __name__ == '__main__':
                 self.fixed_height = fixed_height
 
             def forward(self, input_images_or_features: torch.Tensor, rois: torch.Tensor, output_width: torch.Tensor) -> torch.Tensor:
-                return self.module(input_images_or_features, rois, self.fixed_height, output_width)
+                return typing.cast(
+                    torch.Tensor,
+                    self.module(input_images_or_features, rois, self.fixed_height, output_width),
+                )
 
         export_module = ExportFixedHeight(roi_align_module, output_height)
         export_args = (input_images_or_features, rois, torch.tensor(output_width))
@@ -394,12 +223,15 @@ if __name__ == '__main__':
                 self.fixed_width = fixed_width
 
             def forward(self, input_images_or_features: torch.Tensor, rois: torch.Tensor) -> torch.Tensor:
-                return self.module(input_images_or_features, rois, self.fixed_height, self.fixed_width)
+                return typing.cast(
+                    torch.Tensor,
+                    self.module(input_images_or_features, rois, self.fixed_height, self.fixed_width),
+                )
 
         export_module = ExportFixedOutputSize(roi_align_module, output_height, output_width)
         export_args = (input_images_or_features, rois)
 
-    onnx_model_path = "dynamic_roi_align.onnx"
+    onnx_model_path = args.onnx_output_path
 
     # Export the model to ONNX format
     torch.onnx.export(
