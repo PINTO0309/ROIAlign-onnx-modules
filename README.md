@@ -1,5 +1,5 @@
 # ROIAlign-onnx-modules
-Various implementations of DynamicRoIAlign
+Various implementations of DynamicRoIAlign. This provides an effective component for appropriately filtering the output of object detection models without going through NMS, and then merging various models directly into the subsequent stages.
 
 ## Variants
 
