@@ -1,6 +1,15 @@
 # ROIAlign-onnx-modules
 Various implementations of DynamicRoIAlign
 
+## Variants
+
+| Variant | Summary | Jump |
+| --- | --- | --- |
+| `01_dynamic_roi_align.py` | Basic DynamicRoIAlign export (`rois` is a direct input). | [Go to Section](#variant-01) |
+| `02_dynamic_roi_align_yolo.py` | Integrated YOLO preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-02) |
+| `03_dynamic_roi_align_vit.py` | Integrated ViT output preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-03) |
+
+<a id="variant-01"></a>
 ## 01_dynamic_roi_align.py Usage
 
 `01_dynamic_roi_align.py` exports a DynamicRoIAlign model to ONNX, runs `onnxsim`, and writes metadata into the exported model.
@@ -121,6 +130,7 @@ python 01_dynamic_roi_align.py --aligned
 python 01_dynamic_roi_align.py --onnx-output-path out/dynamic_roi_align.onnx
 ```
 
+<a id="variant-02"></a>
 ## 02_dynamic_roi_align_yolo.py Usage
 
 `02_dynamic_roi_align_yolo.py` exports an integrated ONNX model that includes:
@@ -285,6 +295,7 @@ python 02_dynamic_roi_align_yolo.py --onnx-output-path out/roi_align_yolo.onnx
 python 02_dynamic_roi_align_yolo.py --use-score-threshold 0.250
 ```
 
+<a id="variant-03"></a>
 ## 03_dynamic_roi_align_vit.py Usage
 
 `03_dynamic_roi_align_vit.py` exports an integrated ONNX model that includes:
