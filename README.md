@@ -130,7 +130,7 @@ python 01_dynamic_roi_align.py --onnx-output-path out/dynamic_roi_align.onnx
 3. ONNX simplification (`onnxsim`)
 4. Metadata annotation
 
-<img width="1475" height="1329" alt="image" src="https://github.com/user-attachments/assets/01159aa1-5f1c-4ff8-b2a9-0a3b3f4e8691" />
+<img width="1433" height="1240" alt="image" src="https://github.com/user-attachments/assets/8cdd5dfa-bc94-4ef6-97bd-bb56aabdd28b" />
 
 ### Basic run
 
@@ -293,6 +293,8 @@ python 02_dynamic_roi_align_yolo.py --use-score-threshold 0.250
 2. DynamicRoIAlign inference
 3. ONNX simplification (`onnxsim`)
 4. Metadata annotation
+
+<img width="1565" height="1287" alt="image" src="https://github.com/user-attachments/assets/7169bc93-4f27-46d6-95a7-eafdd4f84e07" />
 
 ### Basic run
 
