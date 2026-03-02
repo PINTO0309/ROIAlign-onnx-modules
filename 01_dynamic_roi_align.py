@@ -242,6 +242,20 @@ if __name__ == '__main__':
         default=17,
         help="ONNX opset version for export (must be >= 16). Default: 17.",
     )
+    aligned_group = parser.add_mutually_exclusive_group()
+    aligned_group.add_argument(
+        "--aligned",
+        dest="aligned",
+        action="store_true",
+        help="Enable aligned ROIAlign sampling (align_corners=True).",
+    )
+    aligned_group.add_argument(
+        "--no-aligned",
+        dest="aligned",
+        action="store_false",
+        help="Disable aligned ROIAlign sampling (align_corners=False).",
+    )
+    parser.set_defaults(aligned=False)
     args = parser.parse_args()
     if args.channels is not None and args.channels <= 0:
         raise ValueError("--channels must be a positive integer")
@@ -291,7 +305,7 @@ if __name__ == '__main__':
 
     # Create and test the module
     # When spatial_scale_arg is None, DynamicRoIAlign uses input_images_or_features H/W dynamically.
-    roi_align_module = DynamicRoIAlign(spatial_scale=spatial_scale_arg)
+    roi_align_module = DynamicRoIAlign(spatial_scale=spatial_scale_arg, aligned=args.aligned)
     output = roi_align_module.forward(input_images_or_features, rois, output_height, output_width)
 
     print("Output shape:", output.shape)
@@ -426,6 +440,7 @@ if __name__ == '__main__':
     reserved_metadata_keys = {
         "input_images_or_features",
         "rois",
+        "aligned",
         "output_height",
         "output_width",
         onnx_output_name,
@@ -447,15 +462,19 @@ if __name__ == '__main__':
         "Each ROI: [batch_idx, x1, y1, x2, y2]\n"
         "Coordinates x1/y1/x2/y2 are normalized to [0, 1]"
     )
-    if dynamic_output_height:
+    model_metadata["aligned"] = (
+        "ROIAlign aligned mode (bool)\n"
+        f"Current export value: {str(args.aligned).lower()}"
+    )
+    if not dynamic_output_height:
         model_metadata["output_height"] = (
-            "Output feature height scalar input (int64)\n"
-            "Used only when output height is dynamic at export time"
+            "Fixed output feature height (int)\n"
+            f"Current export value: {output_height}"
         )
-    if dynamic_output_width:
+    if not dynamic_output_width:
         model_metadata["output_width"] = (
-            "Output feature width scalar input (int64)\n"
-            "Used only when output width is dynamic at export time"
+            "Fixed output feature width (int)\n"
+            f"Current export value: {output_width}"
         )
     model_metadata[onnx_output_name] = (
         "Aligned ROI features shape: [num_rois, C, output_H, output_W]\n"
