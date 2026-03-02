@@ -284,3 +284,170 @@ python 02_dynamic_roi_align_yolo.py --onnx-output-path out/roi_align_yolo.onnx
 ```bash
 python 02_dynamic_roi_align_yolo.py --use-score-threshold 0.250
 ```
+
+## 03_dynamic_roi_align_vit.py Usage
+
+`03_dynamic_roi_align_vit.py` exports an integrated ONNX model that includes:
+
+1. ViT output preprocessing (`[B, Q, F] -> rois [B*Q, 5]`)
+2. DynamicRoIAlign inference
+3. ONNX simplification (`onnxsim`)
+4. Metadata annotation
+
+### Basic run
+
+```bash
+python 03_dynamic_roi_align_vit.py
+```
+
+Generated file:
+
+- `dynamic_roi_align_vit.onnx` (overwritten each run)
+
+### CLI options
+
+```
+python 03_dynamic_roi_align_vit.py \
+  [--channels CHANNELS] \
+  [--batch-size BATCH_SIZE] \
+  [--spatial-scale SPATIAL_SCALE [SPATIAL_SCALE ...]] \
+  [--output-height OUTPUT_HEIGHT] \
+  [--output-width OUTPUT_WIDTH] \
+  [--opset-version OPSET_VERSION] \
+  [--vit-batch-size VIT_BATCH_SIZE] \
+  [--vit-num-queries VIT_NUM_QUERIES] \
+  [--vit-output-fields VIT_OUTPUT_FIELDS] \
+  [--vit-box-format {xyxy,xywh}] \
+  [--onnx-output-path ONNX_OUTPUT_PATH] \
+  [--use-score-threshold USE_SCORE_THRESHOLD] \
+  [--aligned | --no-aligned]
+```
+
+Option summary:
+
+- `--channels`: fix feature map channel dimension in ONNX. Omit to keep channels dynamic.
+- `--batch-size`: fix feature map batch dimension in ONNX. Omit to keep batch dynamic.
+- `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`, omitted means using feature map `H/W` dynamically.
+- `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
+- `--output-width`: output width behavior. Omitted means dynamic scalar ONNX input (`output_width`), specified integer means fixed output width in graph.
+- `--opset-version`: ONNX opset version (`>= 16`).
+- `--vit-batch-size`: fix ViT output axis-0 (`B`). Omit to keep dynamic.
+- `--vit-num-queries`: fix ViT output axis-1 (`Q`). Omit to keep dynamic.
+- `--vit-output-fields`: fix ViT output axis-2 (`F`). Omit to keep dynamic.
+- `--vit-box-format`: interpretation of fields `1:5` in ViT output (`xyxy` or `xywh`).
+- `--onnx-output-path`: export destination path.
+- `--use-score-threshold`: enable score filtering with threshold value in `[0.001, 1.000]`.
+- `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
+
+### ViT output behavior (important)
+
+The integrated model expects ViT output as `[B, Q, F]`:
+
+1. `B`: batch size
+2. `Q`: number of queries
+3. `F`: number of fields per query
+
+Expected common field layout:
+
+1. `field[0]`: label id
+2. `field[1:5]`: box coordinates
+3. `field[5]`: score
+
+Box conversion behavior:
+
+1. Fields `1:5` are decoded by `--vit-box-format`.
+2. Coordinates are converted to normalized `[x1, y1, x2, y2]` in `[0, 1]`.
+3. `rois` are generated as `[batch_idx, x1, y1, x2, y2]`.
+4. ROI count is `B * Q`.
+
+When `--use-score-threshold` is specified:
+
+1. Filtering uses `field[5]` as score.
+2. Queries with `score >= threshold` are kept.
+3. Output is flattened as `[num_rois, C, output_H, output_W]` because ROI count becomes data-dependent.
+
+For typical DEIMv2 output (`[N, 680, 6]`), use:
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--vit-num-queries 680 \
+--vit-output-fields 6
+```
+
+### Output size behavior (important)
+
+The exported ONNX inputs change depending on `--output-height` / `--output-width`:
+
+1. Both omitted: ONNX inputs include `output_height` and `output_width` (both dynamic scalar inputs), and output shape `H/W` are dynamic.
+2. `--output-height` specified, `--output-width` omitted: ONNX input includes only `output_width`; output height is fixed and output width is dynamic.
+3. `--output-height` omitted, `--output-width` specified: ONNX input includes only `output_height`; output height is dynamic and output width is fixed.
+4. Both specified: ONNX inputs do not include output size scalars, and output `H/W` are fixed constants.
+
+Note:
+
+- If output size options are omitted, the script still uses local test values (`7x7`) only for the internal test forward pass before export.
+
+### ONNX names
+
+- Input name: `input_images_or_features`
+- Input name: `vit_output`
+- Optional input names: `output_height`, `output_width` (only when dynamic)
+- Output name: `aligned_features`
+
+### Metadata written to ONNX
+
+The script adds descriptions to ONNX metadata for:
+
+- `input_images_or_features`
+- `vit_output`
+- `vit_box_format`
+- `use_score_threshold` (`score_threshold` is added when enabled)
+- `aligned`
+- `aligned_features`
+- `output_height` (only when fixed output height is used)
+- `output_width` (only when fixed output width is used)
+
+### Examples
+
+1. Fully dynamic output sizes and dynamic ViT axes:
+
+```bash
+python 03_dynamic_roi_align_vit.py
+```
+
+2. Typical DEIMv2 output shape with fixed ROIAlign output size:
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--vit-batch-size 1 \
+--vit-num-queries 680 \
+--vit-output-fields 6 \
+--output-height 7 \
+--output-width 7
+```
+
+3. Fix channels and batch, keep output sizes dynamic:
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--channels 256 \
+--batch-size 1
+```
+
+4. Use `xywh` ViT box format:
+
+```bash
+python 03_dynamic_roi_align_vit.py --vit-box-format xywh
+```
+
+5. Save to custom path:
+
+```bash
+python 03_dynamic_roi_align_vit.py --onnx-output-path out/roi_align_vit.onnx
+```
+
+6. Enable score threshold filtering:
+
+```bash
+python 03_dynamic_roi_align_vit.py --use-score-threshold 0.250
+```
