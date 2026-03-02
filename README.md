@@ -1,6 +1,14 @@
 # ROIAlign-onnx-modules
 Various implementations of DynamicRoIAlign
 
+- Static `output_height`/`output_width`
+
+  <img width="1300" height="1098" alt="image" src="https://github.com/user-attachments/assets/7b44fb0d-2d81-45d1-b1b3-7c6a9ae63a9b" />
+
+- Full dynamic
+
+  <img width="2011" height="1105" alt="image" src="https://github.com/user-attachments/assets/1e5411fb-b4d6-43cd-b815-ab5ce71e404f" />
+
 ## 01_dynamic_roi_align.py Usage
 
 `01_dynamic_roi_align.py` exports a DynamicRoIAlign model to ONNX, runs `onnxsim`, and writes metadata into the exported model.
