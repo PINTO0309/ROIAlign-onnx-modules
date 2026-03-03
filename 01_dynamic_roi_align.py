@@ -29,13 +29,22 @@ if __name__ == '__main__':
         help="If specified, fix the batch dimension to this value in ONNX export.",
     )
     parser.add_argument(
+        "--input-hw-size",
+        type=int,
+        nargs=2,
+        metavar=("H", "W"),
+        default=None,
+        help="If specified, fix input_images_or_features height/width in ONNX export.",
+    )
+    parser.add_argument(
         "--spatial-scale",
         type=float,
         nargs="+",
         default=None,
         help=(
             "Spatial scale for ROI coordinates. Specify 1 value (shared) or 2 values "
-            "(height width). If omitted, input_images_or_features H/W are used."
+            "(height width). If omitted, uses --input-hw-size when provided, "
+            "otherwise uses runtime input_images_or_features H/W."
         ),
     )
     parser.add_argument(
@@ -81,6 +90,9 @@ if __name__ == '__main__':
         raise ValueError("--channels must be a positive integer")
     if args.batch_size is not None and args.batch_size <= 0:
         raise ValueError("--batch-size must be a positive integer")
+    if args.input_hw_size is not None:
+        if args.input_hw_size[0] <= 0 or args.input_hw_size[1] <= 0:
+            raise ValueError("--input-hw-size values must be positive integers")
     if args.spatial_scale is not None and len(args.spatial_scale) not in (1, 2):
         raise ValueError("--spatial-scale must have 1 or 2 values")
     if args.output_height is not None and args.output_height <= 0:
@@ -91,7 +103,10 @@ if __name__ == '__main__':
         raise ValueError("--opset-version must be >= 16")
 
     if args.spatial_scale is None:
-        spatial_scale_arg = None
+        if args.input_hw_size is not None:
+            spatial_scale_arg = (args.input_hw_size[0], args.input_hw_size[1])
+        else:
+            spatial_scale_arg = None
     elif len(args.spatial_scale) == 1:
         spatial_scale_arg = args.spatial_scale[0]
     else:
@@ -101,11 +116,13 @@ if __name__ == '__main__':
     test_input_channels = feature_channels if feature_channels is not None else 256
     feature_batch_size = args.batch_size
     test_input_batch_size = feature_batch_size if feature_batch_size is not None else 2
+    input_height = args.input_hw_size[0] if args.input_hw_size is not None else 56
+    input_width = args.input_hw_size[1] if args.input_hw_size is not None else 56
 
-    # Create dummy input data for testing
-    # Feature map: batch_size=test_input_batch_size, channels=test_input_channels, height=56, width=56
+    # Create dummy input data for testing.
+    # Feature map: batch_size=test_input_batch_size, channels=test_input_channels, height=input_height, width=input_width
     # When --batch-size/--channels are omitted (None), use 2/256 for this local test input only.
-    input_images_or_features = torch.randn(test_input_batch_size, test_input_channels, 56, 56)
+    input_images_or_features = torch.randn(test_input_batch_size, test_input_channels, input_height, input_width)
 
     # Define ROIs: [batch_idx, x1, y1, x2, y2]
     # Note: Coordinates are in feature map space (0-56 range)
@@ -145,10 +162,7 @@ if __name__ == '__main__':
     onnx_output_name = "aligned_features"
 
     dynamic_axes = {
-        "input_images_or_features": {
-            2: "H",             # Variable feature map height
-            3: "W"              # Variable feature map width
-        },
+        "input_images_or_features": {},
         "rois": {
             0: "num_rois"       # Variable number of ROIs
         },
@@ -159,6 +173,10 @@ if __name__ == '__main__':
     if args.batch_size is None:
         # Default behavior: keep batch size dynamic.
         dynamic_axes["input_images_or_features"][0] = "batch_size"
+    if args.input_hw_size is None:
+        # Default behavior: keep input feature map height/width dynamic.
+        dynamic_axes["input_images_or_features"][2] = "H"
+        dynamic_axes["input_images_or_features"][3] = "W"
     if args.channels is None:
         # Default behavior: keep channels dynamic.
         dynamic_axes["input_images_or_features"][1] = "channels"
@@ -266,6 +284,13 @@ if __name__ == '__main__':
         output_channel_dim = simplified_model.graph.output[0].type.tensor_type.shape.dim[1]
         output_channel_dim.ClearField("dim_value")
         output_channel_dim.dim_param = "channels"
+    if args.input_hw_size is None:
+        input_h_dim = simplified_model.graph.input[0].type.tensor_type.shape.dim[2]
+        input_h_dim.ClearField("dim_value")
+        input_h_dim.dim_param = "H"
+        input_w_dim = simplified_model.graph.input[0].type.tensor_type.shape.dim[3]
+        input_w_dim.ClearField("dim_value")
+        input_w_dim.dim_param = "W"
 
     # Append input descriptions to ONNX model metadata.
     existing_metadata = {item.key: item.value for item in simplified_model.metadata_props}
@@ -273,6 +298,7 @@ if __name__ == '__main__':
         "input_images_or_features",
         "rois",
         "aligned",
+        "input_hw_size",
         "output_height",
         "output_width",
         onnx_output_name,
@@ -298,6 +324,11 @@ if __name__ == '__main__':
         "ROIAlign aligned mode (bool)\n"
         f"Current export value: {str(args.aligned).lower()}"
     )
+    if args.input_hw_size is not None:
+        model_metadata["input_hw_size"] = (
+            "Fixed input feature-map size [H, W] (int, int)\n"
+            f"Current export value: [{input_height}, {input_width}]"
+        )
     if not dynamic_output_height:
         model_metadata["output_height"] = (
             "Fixed output feature height (int)\n"

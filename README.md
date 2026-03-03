@@ -38,6 +38,7 @@ Generated file:
 python 01_dynamic_roi_align.py \
   [--channels CHANNELS] \
   [--batch-size BATCH_SIZE] \
+  [--input-hw-size H W] \
   [--spatial-scale SPATIAL_SCALE [SPATIAL_SCALE ...]] \
   [--output-height OUTPUT_HEIGHT] \
   [--output-width OUTPUT_WIDTH] \
@@ -50,12 +51,23 @@ Option summary:
 
 - `--channels`: fix input/output channel dimension in ONNX. Omit to keep channels dynamic.
 - `--batch-size`: fix batch dimension in ONNX input. Omit to keep batch size dynamic.
-- `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`, omitted means using input tensor `H/W` dynamically at runtime.
+- `--input-hw-size`: fix `input_images_or_features` height/width (`H W`) in ONNX input.
+- `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`.
 - `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
 - `--output-width`: output width behavior. Omitted means dynamic scalar ONNX input (`output_width`), specified integer means fixed output width in graph.
 - `--opset-version`: ONNX opset version (`>= 16`).
 - `--onnx-output-path`: export destination path.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
+
+`--spatial-scale` fallback behavior:
+
+1. `--spatial-scale` specified: use the specified value.
+2. `--spatial-scale` omitted and `--input-hw-size` specified: use `(H, W)` as fixed spatial scale.
+3. both omitted: use runtime `input_images_or_features` `H/W` dynamically (`spatial_scale=None`).
+
+Note:
+
+- `--input-hw-size` requires exactly two integers: `H W`.
 
 ### Output size behavior (important)
 
@@ -83,8 +95,9 @@ The script adds descriptions to ONNX metadata for:
 - `input_images_or_features`
 - `rois`
 - `aligned_features`
-- `output_height` (only when dynamic input is used)
-- `output_width` (only when dynamic input is used)
+- `input_hw_size` (only when fixed input size is used)
+- `output_height` (only when fixed output height is used)
+- `output_width` (only when fixed output width is used)
 
 ### Examples
 
