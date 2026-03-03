@@ -158,6 +158,7 @@ Generated file:
 python 02_dynamic_roi_align_yolo.py \
   [--channels CHANNELS] \
   [--batch-size BATCH_SIZE] \
+  [--input-hw-size H W] \
   [--spatial-scale SPATIAL_SCALE [SPATIAL_SCALE ...]] \
   [--output-height OUTPUT_HEIGHT] \
   [--output-width OUTPUT_WIDTH] \
@@ -176,7 +177,8 @@ Option summary:
 
 - `--channels`: fix feature map channel dimension in ONNX. Omit to keep channels dynamic.
 - `--batch-size`: fix feature map batch dimension in ONNX. Omit to keep batch dynamic.
-- `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`, omitted means using feature map `H/W` dynamically.
+- `--input-hw-size`: fix `input_images_or_features` height/width (`H W`) in ONNX input.
+- `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`.
 - `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
 - `--output-width`: output width behavior. Omitted means dynamic scalar ONNX input (`output_width`), specified integer means fixed output width in graph.
 - `--opset-version`: ONNX opset version (`>= 16`).
@@ -188,6 +190,16 @@ Option summary:
 - `--use-score-threshold`: enable score filtering with a fixed threshold value in `[0.001, 1.000]`.
 - `--score-threshold-as-input`: enable score filtering and expose `score_threshold` as a runtime scalar ONNX input.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
+
+`--spatial-scale` fallback behavior:
+
+1. `--spatial-scale` specified: use the specified value.
+2. `--spatial-scale` omitted and `--input-hw-size` specified: use `(H, W)` as fixed spatial scale.
+3. both omitted: use runtime `input_images_or_features` `H/W` dynamically (`spatial_scale=None`).
+
+Note:
+
+- `--input-hw-size` requires exactly two integers: `H W`.
 
 ### YOLO output behavior (important)
 
@@ -250,6 +262,7 @@ The script adds descriptions to ONNX metadata for:
 - `use_score_threshold`, `score_threshold_as_input` (`score_threshold` is added when enabled)
 - `aligned`
 - `aligned_features`
+- `input_hw_size` (only when fixed input size is used)
 - `output_height` (only when fixed output height is used)
 - `output_width` (only when fixed output width is used)
 
@@ -332,6 +345,7 @@ Generated file:
 python 03_dynamic_roi_align_vit.py \
   [--channels CHANNELS] \
   [--batch-size BATCH_SIZE] \
+  [--input-hw-size H W] \
   [--spatial-scale SPATIAL_SCALE [SPATIAL_SCALE ...]] \
   [--output-height OUTPUT_HEIGHT] \
   [--output-width OUTPUT_WIDTH] \
@@ -350,7 +364,8 @@ Option summary:
 
 - `--channels`: fix feature map channel dimension in ONNX. Omit to keep channels dynamic.
 - `--batch-size`: fix feature map batch dimension in ONNX. Omit to keep batch dynamic.
-- `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`, omitted means using feature map `H/W` dynamically.
+- `--input-hw-size`: fix `input_images_or_features` height/width (`H W`) in ONNX input.
+- `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`.
 - `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
 - `--output-width`: output width behavior. Omitted means dynamic scalar ONNX input (`output_width`), specified integer means fixed output width in graph.
 - `--opset-version`: ONNX opset version (`>= 16`).
@@ -362,6 +377,16 @@ Option summary:
 - `--use-score-threshold`: enable score filtering with a fixed threshold value in `[0.001, 1.000]`.
 - `--score-threshold-as-input`: enable score filtering and expose `score_threshold` as a runtime scalar ONNX input.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
+
+`--spatial-scale` fallback behavior:
+
+1. `--spatial-scale` specified: use the specified value.
+2. `--spatial-scale` omitted and `--input-hw-size` specified: use `(H, W)` as fixed spatial scale.
+3. both omitted: use runtime `input_images_or_features` `H/W` dynamically (`spatial_scale=None`).
+
+Note:
+
+- `--input-hw-size` requires exactly two integers: `H W`.
 
 ### ViT output behavior (important)
 
@@ -429,6 +454,7 @@ The script adds descriptions to ONNX metadata for:
 - `use_score_threshold`, `score_threshold_as_input` (`score_threshold` is added when enabled)
 - `aligned`
 - `aligned_features`
+- `input_hw_size` (only when fixed input size is used)
 - `output_height` (only when fixed output height is used)
 - `output_width` (only when fixed output width is used)
 

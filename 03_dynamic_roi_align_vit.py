@@ -188,13 +188,22 @@ if __name__ == "__main__":
         help="If specified, fix the feature-map batch dimension in ONNX export.",
     )
     parser.add_argument(
+        "--input-hw-size",
+        type=int,
+        nargs=2,
+        metavar=("H", "W"),
+        default=None,
+        help="If specified, fix input_images_or_features height/width in ONNX export.",
+    )
+    parser.add_argument(
         "--spatial-scale",
         type=float,
         nargs="+",
         default=None,
         help=(
             "Spatial scale for ROI coordinates. Specify 1 value (shared) or 2 values "
-            "(height width). If omitted, input_images_or_features H/W are used."
+            "(height width). If omitted, uses --input-hw-size when provided, "
+            "otherwise uses runtime input_images_or_features H/W."
         ),
     )
     parser.add_argument(
@@ -279,6 +288,9 @@ if __name__ == "__main__":
         raise ValueError("--channels must be a positive integer")
     if args.batch_size is not None and args.batch_size <= 0:
         raise ValueError("--batch-size must be a positive integer")
+    if args.input_hw_size is not None:
+        if args.input_hw_size[0] <= 0 or args.input_hw_size[1] <= 0:
+            raise ValueError("--input-hw-size values must be positive integers")
     if args.spatial_scale is not None and len(args.spatial_scale) not in (1, 2):
         raise ValueError("--spatial-scale must have 1 or 2 values")
     if args.output_height is not None and args.output_height <= 0:
@@ -303,7 +315,10 @@ if __name__ == "__main__":
         raise ValueError("--vit-output-fields must be >= 6 when score filtering is enabled")
 
     if args.spatial_scale is None:
-        spatial_scale_arg = None
+        if args.input_hw_size is not None:
+            spatial_scale_arg = (args.input_hw_size[0], args.input_hw_size[1])
+        else:
+            spatial_scale_arg = None
     elif len(args.spatial_scale) == 1:
         spatial_scale_arg = args.spatial_scale[0]
     else:
@@ -317,8 +332,10 @@ if __name__ == "__main__":
     test_input_channels = args.channels if args.channels is not None else 256
     vit_num_queries = args.vit_num_queries if args.vit_num_queries is not None else 680
     vit_output_fields = args.vit_output_fields if args.vit_output_fields is not None else 6
+    input_height = args.input_hw_size[0] if args.input_hw_size is not None else 56
+    input_width = args.input_hw_size[1] if args.input_hw_size is not None else 56
 
-    input_images_or_features = torch.randn(test_input_batch_size, test_input_channels, 56, 56)
+    input_images_or_features = torch.randn(test_input_batch_size, test_input_channels, input_height, input_width)
     vit_output = torch.randn(vit_batch_size, vit_num_queries, vit_output_fields)
 
     # Build valid-ish box values for fields 1:5.
@@ -370,13 +387,16 @@ if __name__ == "__main__":
 
     onnx_output_name = "aligned_features"
     dynamic_axes = {
-        "input_images_or_features": {2: "H", 3: "W"},
+        "input_images_or_features": {},
         "vit_output": {},
         onnx_output_name: {},
     }
 
     if args.batch_size is None:
         dynamic_axes["input_images_or_features"][0] = "batch_size"
+    if args.input_hw_size is None:
+        dynamic_axes["input_images_or_features"][2] = "H"
+        dynamic_axes["input_images_or_features"][3] = "W"
 
     if args.vit_batch_size is None:
         dynamic_axes["vit_output"][0] = "vit_batch_size"
@@ -541,6 +561,9 @@ if __name__ == "__main__":
     if args.channels is None:
         _set_input_dim_param(simplified_model, "input_images_or_features", 1, "channels")
         _set_output_dim_param(simplified_model, onnx_output_name, output_channel_axis, "channels")
+    if args.input_hw_size is None:
+        _set_input_dim_param(simplified_model, "input_images_or_features", 2, "H")
+        _set_input_dim_param(simplified_model, "input_images_or_features", 3, "W")
     if args.vit_batch_size is None:
         _set_input_dim_param(simplified_model, "vit_output", 0, "vit_batch_size")
     if args.vit_num_queries is None:
@@ -568,6 +591,7 @@ if __name__ == "__main__":
         "use_score_threshold",
         "score_threshold_as_input",
         "score_threshold",
+        "input_hw_size",
         "output_height",
         "output_width",
         onnx_output_name,
@@ -600,6 +624,11 @@ if __name__ == "__main__":
         "ROIAlign aligned mode (bool)\n"
         f"Current export value: {str(args.aligned).lower()}"
     )
+    if args.input_hw_size is not None:
+        model_metadata["input_hw_size"] = (
+            "Fixed input feature-map size [H, W] (int, int)\n"
+            f"Current export value: [{input_height}, {input_width}]"
+        )
     if not dynamic_output_height:
         model_metadata["output_height"] = (
             "Fixed output feature height (int)\n"
