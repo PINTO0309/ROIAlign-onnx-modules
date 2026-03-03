@@ -9,7 +9,7 @@ Various implementations of DynamicRoIAlign. This provides an effective component
 | `02_dynamic_roi_align_yolo.py` | Integrated YOLO preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-02) |
 | `03_dynamic_roi_align_vit.py` | Integrated ViT output preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-03) |
 
-A sample generated ONNX file can be found [here](./samples).
+A sample generated ONNX file can be found [here(./sample)](./sample).
 
 <a id="variant-01"></a>
 ## 01_dynamic_roi_align.py Usage
