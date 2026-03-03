@@ -62,11 +62,13 @@ class DynamicRoIAlign(torch.nn.Module):
         if isinstance(output_height, (list, tuple)):
             output_height = output_height[0] if len(output_height) > 0 else output_height
         if not torch.is_tensor(output_width):
-            output_width = torch.tensor(output_width, dtype=torch.int64, device=rois.device)
+            # Use torch.full instead of torch.tensor to avoid trace-time constant warnings.
+            output_width = torch.full((), int(output_width), dtype=torch.int64, device=rois.device)
         else:
             output_width = output_width.to(dtype=torch.int64, device=rois.device).reshape(())
         if not torch.is_tensor(output_height):
-            output_height = torch.tensor(output_height, dtype=torch.int64, device=rois.device)
+            # Use torch.full instead of torch.tensor to avoid trace-time constant warnings.
+            output_height = torch.full((), int(output_height), dtype=torch.int64, device=rois.device)
         else:
             output_height = output_height.to(dtype=torch.int64, device=rois.device).reshape(())
 
