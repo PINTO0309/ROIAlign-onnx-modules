@@ -8,6 +8,7 @@ This module exports an ONNX model that:
 
 import argparse
 import typing
+import warnings
 from typing import Optional
 
 import onnx
@@ -537,16 +538,22 @@ if __name__ == "__main__":
 
     onnx_model_path = args.onnx_output_path
     print("\nTesting ONNX export...")
-    torch.onnx.export(
-        export_module,
-        export_args,
-        onnx_model_path,
-        input_names=input_names,
-        output_names=[onnx_output_name],
-        dynamic_axes=dynamic_axes,
-        opset_version=args.opset_version,
-        dynamo=False,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="You are using the legacy TorchScript-based ONNX export.*",
+            category=DeprecationWarning,
+        )
+        torch.onnx.export(
+            export_module,
+            export_args,
+            onnx_model_path,
+            input_names=input_names,
+            output_names=[onnx_output_name],
+            dynamic_axes=dynamic_axes,
+            opset_version=args.opset_version,
+            dynamo=False,
+        )
     print(f"ONNX model exported successfully to: {onnx_model_path}")
 
     print("Running onnxsim...")

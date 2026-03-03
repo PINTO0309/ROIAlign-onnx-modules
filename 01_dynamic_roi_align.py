@@ -6,6 +6,7 @@ allowing different ROI sizes to be processed in a single forward pass.
 
 import argparse
 import typing
+import warnings
 import onnx
 import torch
 from onnxsim import simplify
@@ -252,16 +253,22 @@ if __name__ == '__main__':
     onnx_model_path = args.onnx_output_path
 
     # Export the model to ONNX format
-    torch.onnx.export(
-        export_module,
-        export_args,
-        onnx_model_path,
-        input_names=input_names,
-        output_names=[onnx_output_name],
-        dynamic_axes=dynamic_axes,
-        opset_version=args.opset_version,  # Opset 16+ required for grid_sample with dynamic shapes
-        dynamo=False,  # Supports mixed input/constant export arguments with dynamic_axes.
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="You are using the legacy TorchScript-based ONNX export.*",
+            category=DeprecationWarning,
+        )
+        torch.onnx.export(
+            export_module,
+            export_args,
+            onnx_model_path,
+            input_names=input_names,
+            output_names=[onnx_output_name],
+            dynamic_axes=dynamic_axes,
+            opset_version=args.opset_version,  # Opset 16+ required for grid_sample with dynamic shapes
+            dynamo=False,  # Supports mixed input/constant export arguments with dynamic_axes.
+        )
     print(f"ONNX model exported successfully to: {onnx_model_path}")
 
     # Simplify the exported ONNX model with onnxsim Python API.
