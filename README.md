@@ -36,8 +36,8 @@ Generated file:
 
 ```
 python 01_dynamic_roi_align.py \
-  [--channels CHANNELS] \
-  [--batch-size BATCH_SIZE] \
+  [--input-channels INPUT_CHANNELS] \
+  [--input-batch-size INPUT_BATCH_SIZE] \
   [--input-hw-size H W] \
   [--spatial-scale SPATIAL_SCALE [SPATIAL_SCALE ...]] \
   [--output-height OUTPUT_HEIGHT] \
@@ -49,8 +49,8 @@ python 01_dynamic_roi_align.py \
 
 Option summary:
 
-- `--channels`: fix input/output channel dimension in ONNX. Omit to keep channels dynamic.
-- `--batch-size`: fix batch dimension in ONNX input. Omit to keep batch size dynamic.
+- `--input-channels`: fix input/output channel dimension in ONNX. Omit to keep channels dynamic.
+- `--input-batch-size`: fix batch dimension in ONNX input. Omit to keep batch size dynamic.
 - `--input-hw-size`: fix `input_images_or_features` height/width (`H W`) in ONNX input.
 - `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`.
 - `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
@@ -116,7 +116,7 @@ python 01_dynamic_roi_align.py --output-height 5 --output-width 9
 3. Fixed channels and batch, dynamic output size:
 
 ```bash
-python 01_dynamic_roi_align.py --channels 256 --batch-size 1
+python 01_dynamic_roi_align.py --input-channels 256 --input-batch-size 1
 ```
 
 4. Non-square spatial scale:
@@ -169,8 +169,8 @@ Generated file:
 
 ```
 python 02_dynamic_roi_align_yolo.py \
-  [--channels CHANNELS] \
-  [--batch-size BATCH_SIZE] \
+  [--input-channels INPUT_CHANNELS] \
+  [--input-batch-size INPUT_BATCH_SIZE] \
   [--input-hw-size H W] \
   [--spatial-scale SPATIAL_SCALE [SPATIAL_SCALE ...]] \
   [--output-height OUTPUT_HEIGHT] \
@@ -188,8 +188,8 @@ python 02_dynamic_roi_align_yolo.py \
 
 Option summary:
 
-- `--channels`: fix feature map channel dimension in ONNX. Omit to keep channels dynamic.
-- `--batch-size`: fix feature map batch dimension in ONNX. Omit to keep batch dynamic.
+- `--input-channels`: fix feature map channel dimension in ONNX. Omit to keep channels dynamic.
+- `--input-batch-size`: fix feature map batch dimension in ONNX. Omit to keep batch dynamic.
 - `--input-hw-size`: fix `input_images_or_features` height/width (`H W`) in ONNX input.
 - `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`.
 - `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
@@ -302,8 +302,8 @@ python 02_dynamic_roi_align_yolo.py \
 
 ```bash
 python 02_dynamic_roi_align_yolo.py \
---channels 256 \
---batch-size 1
+--input-channels 256 \
+--input-batch-size 1
 ```
 
 4. Use `xyxy` YOLO box format:
@@ -356,8 +356,8 @@ Generated file:
 
 ```
 python 03_dynamic_roi_align_vit.py \
-  [--channels CHANNELS] \
-  [--batch-size BATCH_SIZE] \
+  [--input-channels INPUT_CHANNELS] \
+  [--input-batch-size INPUT_BATCH_SIZE] \
   [--input-hw-size H W] \
   [--spatial-scale SPATIAL_SCALE [SPATIAL_SCALE ...]] \
   [--output-height OUTPUT_HEIGHT] \
@@ -375,8 +375,8 @@ python 03_dynamic_roi_align_vit.py \
 
 Option summary:
 
-- `--channels`: fix feature map channel dimension in ONNX. Omit to keep channels dynamic.
-- `--batch-size`: fix feature map batch dimension in ONNX. Omit to keep batch dynamic.
+- `--input-channels`: fix feature map channel dimension in ONNX. Omit to keep channels dynamic.
+- `--input-batch-size`: fix feature map batch dimension in ONNX. Omit to keep batch dynamic.
 - `--input-hw-size`: fix `input_images_or_features` height/width (`H W`) in ONNX input.
 - `--spatial-scale`: ROI coordinate scale. One value means shared H/W scale, two values mean `(scale_h, scale_w)`.
 - `--output-height`: output height behavior. Omitted means dynamic scalar ONNX input (`output_height`), specified integer means fixed output height in graph.
@@ -494,8 +494,8 @@ python 03_dynamic_roi_align_vit.py \
 
 ```bash
 python 03_dynamic_roi_align_vit.py \
---channels 256 \
---batch-size 1
+--input-channels 256 \
+--input-batch-size 1
 ```
 
 4. Use `xywh` ViT box format:

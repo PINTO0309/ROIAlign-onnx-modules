@@ -17,16 +17,16 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--channels",
+        "--input-channels",
         type=int,
         default=None,
-        help="If specified, fix the channel dimension to this value in ONNX export.",
+        help="If specified, fix the input channel dimension to this value in ONNX export.",
     )
     parser.add_argument(
-        "--batch-size",
+        "--input-batch-size",
         type=int,
         default=None,
-        help="If specified, fix the batch dimension to this value in ONNX export.",
+        help="If specified, fix the input batch dimension to this value in ONNX export.",
     )
     parser.add_argument(
         "--input-hw-size",
@@ -86,10 +86,10 @@ if __name__ == '__main__':
     )
     parser.set_defaults(aligned=False)
     args = parser.parse_args()
-    if args.channels is not None and args.channels <= 0:
-        raise ValueError("--channels must be a positive integer")
-    if args.batch_size is not None and args.batch_size <= 0:
-        raise ValueError("--batch-size must be a positive integer")
+    if args.input_channels is not None and args.input_channels <= 0:
+        raise ValueError("--input-channels must be a positive integer")
+    if args.input_batch_size is not None and args.input_batch_size <= 0:
+        raise ValueError("--input-batch-size must be a positive integer")
     if args.input_hw_size is not None:
         if args.input_hw_size[0] <= 0 or args.input_hw_size[1] <= 0:
             raise ValueError("--input-hw-size values must be positive integers")
@@ -112,16 +112,16 @@ if __name__ == '__main__':
     else:
         spatial_scale_arg = (args.spatial_scale[0], args.spatial_scale[1])
 
-    feature_channels = args.channels
+    feature_channels = args.input_channels
     test_input_channels = feature_channels if feature_channels is not None else 256
-    feature_batch_size = args.batch_size
+    feature_batch_size = args.input_batch_size
     test_input_batch_size = feature_batch_size if feature_batch_size is not None else 2
     input_height = args.input_hw_size[0] if args.input_hw_size is not None else 56
     input_width = args.input_hw_size[1] if args.input_hw_size is not None else 56
 
     # Create dummy input data for testing.
     # Feature map: batch_size=test_input_batch_size, channels=test_input_channels, height=input_height, width=input_width
-    # When --batch-size/--channels are omitted (None), use 2/256 for this local test input only.
+    # When --input-batch-size/--input-channels are omitted (None), use 2/256 for this local test input only.
     input_images_or_features = torch.randn(test_input_batch_size, test_input_channels, input_height, input_width)
 
     # Define ROIs: [batch_idx, x1, y1, x2, y2]
@@ -170,14 +170,14 @@ if __name__ == '__main__':
             0: "num_rois",      # Matches number of input ROIs
         }
     }
-    if args.batch_size is None:
+    if args.input_batch_size is None:
         # Default behavior: keep batch size dynamic.
         dynamic_axes["input_images_or_features"][0] = "batch_size"
     if args.input_hw_size is None:
         # Default behavior: keep input feature map height/width dynamic.
         dynamic_axes["input_images_or_features"][2] = "H"
         dynamic_axes["input_images_or_features"][3] = "W"
-    if args.channels is None:
+    if args.input_channels is None:
         # Default behavior: keep channels dynamic.
         dynamic_axes["input_images_or_features"][1] = "channels"
         dynamic_axes[onnx_output_name][1] = "channels"
@@ -270,13 +270,13 @@ if __name__ == '__main__':
     if not check:
         raise RuntimeError("onnxsim validation failed")
 
-    if args.batch_size is None:
+    if args.input_batch_size is None:
         # Keep symbolic batch axis on ONNX input even after simplification.
         input_batch_dim = simplified_model.graph.input[0].type.tensor_type.shape.dim[0]
         input_batch_dim.ClearField("dim_value")
         input_batch_dim.dim_param = "batch_size"
 
-    if args.channels is None:
+    if args.input_channels is None:
         # Keep symbolic channel axis on ONNX input/output even after simplification.
         input_channel_dim = simplified_model.graph.input[0].type.tensor_type.shape.dim[1]
         input_channel_dim.ClearField("dim_value")

@@ -176,13 +176,13 @@ def _set_output_dim_param(model: onnx.ModelProto, output_name: str, axis: int, d
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--channels",
+        "--input-channels",
         type=int,
         default=None,
         help="If specified, fix the feature-map channel dimension in ONNX export.",
     )
     parser.add_argument(
-        "--batch-size",
+        "--input-batch-size",
         type=int,
         default=None,
         help="If specified, fix the feature-map batch dimension in ONNX export.",
@@ -284,10 +284,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.channels is not None and args.channels <= 0:
-        raise ValueError("--channels must be a positive integer")
-    if args.batch_size is not None and args.batch_size <= 0:
-        raise ValueError("--batch-size must be a positive integer")
+    if args.input_channels is not None and args.input_channels <= 0:
+        raise ValueError("--input-channels must be a positive integer")
+    if args.input_batch_size is not None and args.input_batch_size <= 0:
+        raise ValueError("--input-batch-size must be a positive integer")
     if args.input_hw_size is not None:
         if args.input_hw_size[0] <= 0 or args.input_hw_size[1] <= 0:
             raise ValueError("--input-hw-size values must be positive integers")
@@ -305,8 +305,8 @@ if __name__ == "__main__":
         raise ValueError("--vit-num-queries must be a positive integer")
     if args.vit_output_fields is not None and args.vit_output_fields < 5:
         raise ValueError("--vit-output-fields must be >= 5")
-    if args.batch_size is not None and args.vit_batch_size is not None and args.batch_size != args.vit_batch_size:
-        raise ValueError("--batch-size and --vit-batch-size must match when both are specified")
+    if args.input_batch_size is not None and args.vit_batch_size is not None and args.input_batch_size != args.vit_batch_size:
+        raise ValueError("--input-batch-size and --vit-batch-size must match when both are specified")
     if args.use_score_threshold is not None and not (0.001 <= args.use_score_threshold <= 1.0):
         raise ValueError("--use-score-threshold must be in the range [0.001, 1.000]")
     if args.use_score_threshold is not None and args.score_threshold_as_input:
@@ -324,12 +324,12 @@ if __name__ == "__main__":
     else:
         spatial_scale_arg = (args.spatial_scale[0], args.spatial_scale[1])
 
-    test_input_batch_size = args.batch_size if args.batch_size is not None else (
+    test_input_batch_size = args.input_batch_size if args.input_batch_size is not None else (
         args.vit_batch_size if args.vit_batch_size is not None else 1
     )
     vit_batch_size = args.vit_batch_size if args.vit_batch_size is not None else test_input_batch_size
 
-    test_input_channels = args.channels if args.channels is not None else 256
+    test_input_channels = args.input_channels if args.input_channels is not None else 256
     vit_num_queries = args.vit_num_queries if args.vit_num_queries is not None else 680
     vit_output_fields = args.vit_output_fields if args.vit_output_fields is not None else 6
     input_height = args.input_hw_size[0] if args.input_hw_size is not None else 56
@@ -392,7 +392,7 @@ if __name__ == "__main__":
         onnx_output_name: {},
     }
 
-    if args.batch_size is None:
+    if args.input_batch_size is None:
         dynamic_axes["input_images_or_features"][0] = "batch_size"
     if args.input_hw_size is None:
         dynamic_axes["input_images_or_features"][2] = "H"
@@ -410,7 +410,7 @@ if __name__ == "__main__":
     if output_is_flattened:
         # Output: [num_rois, C, H, W]
         dynamic_axes[onnx_output_name][0] = "num_rois"
-        if args.channels is None:
+        if args.input_channels is None:
             dynamic_axes["input_images_or_features"][1] = "channels"
             dynamic_axes[onnx_output_name][1] = "channels"
         output_axis_h = 2
@@ -421,7 +421,7 @@ if __name__ == "__main__":
             dynamic_axes[onnx_output_name][0] = "vit_batch_size"
         if args.vit_num_queries is None:
             dynamic_axes[onnx_output_name][1] = "num_queries"
-        if args.channels is None:
+        if args.input_channels is None:
             dynamic_axes["input_images_or_features"][1] = "channels"
             dynamic_axes[onnx_output_name][2] = "channels"
         output_axis_h = 3
@@ -556,9 +556,9 @@ if __name__ == "__main__":
 
     # Preserve symbolic dimensions where requested.
     output_channel_axis = 1 if output_is_flattened else 2
-    if args.batch_size is None:
+    if args.input_batch_size is None:
         _set_input_dim_param(simplified_model, "input_images_or_features", 0, "batch_size")
-    if args.channels is None:
+    if args.input_channels is None:
         _set_input_dim_param(simplified_model, "input_images_or_features", 1, "channels")
         _set_output_dim_param(simplified_model, onnx_output_name, output_channel_axis, "channels")
     if args.input_hw_size is None:
