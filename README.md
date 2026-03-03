@@ -291,11 +291,15 @@ python 02_dynamic_roi_align_yolo.py
 
 ```bash
 python 02_dynamic_roi_align_yolo.py \
+--batch-size 1 \
+--channels 3 \
+--input-hw-size 480 640 \
 --yolo-batch-size 1 \
 --yolo-output-channels 29 \
 --yolo-num-candidates 6300 \
---output-height 7 \
---output-width 7
+--score-threshold-as-input \
+--output-height 128 \
+--output-width 64
 ```
 
 3. Fix channels and batch, keep output sizes dynamic:
@@ -483,11 +487,15 @@ python 03_dynamic_roi_align_vit.py
 
 ```bash
 python 03_dynamic_roi_align_vit.py \
+--batch-size 1 \
+--channels 3 \
+--input-hw-size 480 640 \
 --vit-batch-size 1 \
 --vit-num-queries 680 \
 --vit-output-fields 6 \
---output-height 7 \
---output-width 7
+--score-threshold-as-input \
+--output-height 128 \
+--output-width 64
 ```
 
 3. Fix channels and batch, keep output sizes dynamic:
