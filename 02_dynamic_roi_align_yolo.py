@@ -20,8 +20,8 @@ from dynamic_roi_align_core import DynamicRoIAlign
 TopKGroupSpec = tuple[str, int, list[int]]
 TopKGroupOutputSize = tuple[int, int]
 YoloForwardOutput = torch.Tensor | tuple[torch.Tensor, ...]
-GroupedRoisOutput = tuple[tuple[torch.Tensor, ...], tuple[torch.Tensor, ...]]
-YoloToRoisOutput = tuple[torch.Tensor, torch.Tensor] | GroupedRoisOutput
+GroupedRoisOutput = tuple[tuple[torch.Tensor, ...], tuple[torch.Tensor, ...], tuple[torch.Tensor, ...]]
+YoloToRoisOutput = tuple[torch.Tensor, torch.Tensor, torch.Tensor] | GroupedRoisOutput
 
 
 def _parse_topk_group_specs(raw_specs: list[str]) -> list[TopKGroupSpec]:
@@ -127,14 +127,20 @@ class YoloOutputToRois(torch.nn.Module):
         score_threshold: Optional[float] = None,
         use_topk: Optional[int] = None,
         topk_groups: Optional[list[TopKGroupSpec]] = None,
+        topk_sorted: bool = False,
+        topk_sort_order: str = "desc",
     ):
         super().__init__()
         if box_format not in ("xywh", "xyxy"):
             raise ValueError("box_format must be 'xywh' or 'xyxy'")
+        if topk_sort_order not in ("desc", "asc"):
+            raise ValueError("topk_sort_order must be 'desc' or 'asc'")
         self.box_format = box_format
         self.score_threshold = score_threshold
         self.use_topk = use_topk
         self.topk_groups = topk_groups
+        self.topk_sorted = topk_sorted
+        self.topk_sort_order = topk_sort_order
         self.topk_groups_total = sum(spec[1] for spec in topk_groups) if topk_groups is not None else None
 
     def forward(
@@ -144,8 +150,11 @@ class YoloOutputToRois(torch.nn.Module):
         score_threshold: Optional[torch.Tensor | float] = None,
         use_topk: Optional[int] = None,
         topk_groups: Optional[list[TopKGroupSpec]] = None,
+        topk_sorted: Optional[bool] = None,
+        topk_sort_order: Optional[str] = None,
         return_classids: bool = False,
         return_grouped: bool = False,
+        return_indices: bool = False,
     ) -> YoloToRoisOutput:
         # yolo_output: [B, S, N], use first 4 channels as box coordinates.
         boxes = yolo_output[:, :4, :]
@@ -199,6 +208,11 @@ class YoloOutputToRois(torch.nn.Module):
         effective_topk_groups = topk_groups
         if effective_topk_groups is None:
             effective_topk_groups = self.topk_groups
+        effective_topk_sorted = self.topk_sorted if topk_sorted is None else topk_sorted
+        effective_topk_sort_order = self.topk_sort_order if topk_sort_order is None else topk_sort_order
+        if effective_topk_sort_order not in ("desc", "asc"):
+            raise ValueError("topk_sort_order must be 'desc' or 'asc'")
+        effective_topk_largest = effective_topk_sort_order == "desc"
 
         if effective_use_topk is not None and effective_topk_groups is not None:
             raise ValueError("use_topk and topk_groups cannot be enabled at the same time")
@@ -210,10 +224,12 @@ class YoloOutputToRois(torch.nn.Module):
             raise ValueError("return_grouped requires topk_groups")
 
         class_ids = torch.empty((0,), dtype=torch.int64, device=yolo_output.device)
+        yolo_candidate_indices = torch.empty((0,), dtype=torch.int64, device=yolo_output.device)
         if effective_topk_groups is not None:
             class_scores = yolo_output[:, 4:, :]
             grouped_rois: list[torch.Tensor] = []
             grouped_class_ids: list[torch.Tensor] = []
+            grouped_yolo_candidate_indices: list[torch.Tensor] = []
             for _, group_topk, group_class_ids in effective_topk_groups:
                 if len(group_class_ids) == 1:
                     # Single-class group: ReduceMax over class axis is an identity.
@@ -228,11 +244,13 @@ class YoloOutputToRois(torch.nn.Module):
                     group_max_scores,
                     k=group_topk,
                     dim=1,
-                    largest=True,
-                    sorted=False,
+                    largest=effective_topk_largest,
+                    sorted=effective_topk_sorted,
                 ).indices
                 gather_indices = topk_indices.unsqueeze(-1).expand(-1, -1, 5)
                 grouped_rois.append(torch.gather(rois_per_candidate, dim=1, index=gather_indices))
+                if return_indices:
+                    grouped_yolo_candidate_indices.append(topk_indices)
                 if return_classids:
                     if len(group_class_ids) == 1:
                         grouped_class_ids.append(
@@ -248,10 +266,12 @@ class YoloOutputToRois(torch.nn.Module):
                         group_best_class_ids = group_class_lookup[group_best_class_offsets]
                         grouped_class_ids.append(torch.gather(group_best_class_ids, dim=1, index=topk_indices))
             if return_grouped:
-                return tuple(grouped_rois), tuple(grouped_class_ids)
+                return tuple(grouped_rois), tuple(grouped_class_ids), tuple(grouped_yolo_candidate_indices)
             rois = torch.cat(grouped_rois, dim=1).reshape(-1, 5)
             if return_classids:
                 class_ids = torch.cat(grouped_class_ids, dim=1).reshape(-1)
+            if return_indices:
+                yolo_candidate_indices = torch.cat(grouped_yolo_candidate_indices, dim=1).reshape(-1)
         elif effective_use_topk is not None:
             if effective_use_topk <= 0:
                 raise ValueError("use_topk must be a positive integer")
@@ -262,14 +282,16 @@ class YoloOutputToRois(torch.nn.Module):
                 max_scores,
                 k=effective_use_topk,
                 dim=1,
-                largest=True,
-                sorted=False,
+                largest=effective_topk_largest,
+                sorted=effective_topk_sorted,
             ).indices
             gather_indices = topk_indices.unsqueeze(-1).expand(-1, -1, 5)
             rois = torch.gather(rois_per_candidate, dim=1, index=gather_indices).reshape(-1, 5)
             if return_classids:
                 best_class_ids = torch.argmax(class_scores, dim=1).to(torch.int64)
                 class_ids = torch.gather(best_class_ids, dim=1, index=topk_indices).reshape(-1)
+            if return_indices:
+                yolo_candidate_indices = topk_indices.reshape(-1)
         elif effective_score_threshold is not None:
             if not torch.is_tensor(effective_score_threshold):
                 effective_score_threshold = torch.tensor(
@@ -291,14 +313,28 @@ class YoloOutputToRois(torch.nn.Module):
             if return_classids:
                 best_class_ids = torch.argmax(class_scores, dim=1).to(torch.int64)
                 class_ids = best_class_ids.reshape(-1)[score_mask.reshape(-1)]
+            if return_indices:
+                candidate_index_grid = (
+                    torch.arange(num_candidates, dtype=torch.int64, device=yolo_output.device)
+                    .unsqueeze(0)
+                    .expand(batch_size, num_candidates)
+                )
+                yolo_candidate_indices = candidate_index_grid.reshape(-1)[score_mask.reshape(-1)]
         else:
             rois = rois_per_candidate.reshape(-1, 5)
             if return_classids:
                 class_scores = yolo_output[:, 4:, :]
                 best_class_ids = torch.argmax(class_scores, dim=1).to(torch.int64)
                 class_ids = best_class_ids.reshape(-1)
+            if return_indices:
+                yolo_candidate_indices = (
+                    torch.arange(num_candidates, dtype=torch.int64, device=yolo_output.device)
+                    .unsqueeze(0)
+                    .expand(batch_size, num_candidates)
+                    .reshape(-1)
+                )
 
-        return rois, class_ids
+        return rois, class_ids, yolo_candidate_indices
 
 
 class DynamicRoIAlignFromYolo(torch.nn.Module):
@@ -311,18 +347,24 @@ class DynamicRoIAlignFromYolo(torch.nn.Module):
         score_threshold: Optional[float] = None,
         use_topk: Optional[int] = None,
         topk_groups: Optional[list[TopKGroupSpec]] = None,
+        topk_sorted: bool = False,
+        topk_sort_order: str = "desc",
         topk_group_output_sizes: Optional[list[TopKGroupOutputSize]] = None,
         enable_output_classids: bool = False,
+        enable_output_indices: bool = False,
     ):
         super().__init__()
         self.roi_align = roi_align_module
         self.enable_output_classids = enable_output_classids
+        self.enable_output_indices = enable_output_indices
         self.topk_group_output_sizes = topk_group_output_sizes
         self.yolo_to_rois = YoloOutputToRois(
             box_format=yolo_box_format,
             score_threshold=score_threshold,
             use_topk=use_topk,
             topk_groups=topk_groups,
+            topk_sorted=topk_sorted,
+            topk_sort_order=topk_sort_order,
         )
 
     def forward(
@@ -338,6 +380,8 @@ class DynamicRoIAlignFromYolo(torch.nn.Module):
             runtime_score_threshold = self.yolo_to_rois.score_threshold
         runtime_use_topk = self.yolo_to_rois.use_topk
         runtime_topk_groups = self.yolo_to_rois.topk_groups
+        runtime_topk_sorted = self.yolo_to_rois.topk_sorted
+        runtime_topk_sort_order = self.yolo_to_rois.topk_sort_order
         runtime_topk_group_output_sizes = self.topk_group_output_sizes
 
         if runtime_use_topk is not None and runtime_topk_groups is not None:
@@ -346,16 +390,19 @@ class DynamicRoIAlignFromYolo(torch.nn.Module):
             raise ValueError("score_threshold cannot be enabled together with topk options")
 
         if runtime_topk_groups is not None and runtime_topk_group_output_sizes is not None:
-            grouped_rois, grouped_class_ids = typing.cast(
+            grouped_rois, grouped_class_ids, grouped_yolo_candidate_indices = typing.cast(
                 GroupedRoisOutput,
                 self.yolo_to_rois(
-                    yolo_output,
-                    input_images_or_features,
-                    runtime_score_threshold,
-                    runtime_use_topk,
-                    runtime_topk_groups,
-                    self.enable_output_classids,
-                    True,
+                    yolo_output=yolo_output,
+                    input_images_or_features=input_images_or_features,
+                    score_threshold=runtime_score_threshold,
+                    use_topk=runtime_use_topk,
+                    topk_groups=runtime_topk_groups,
+                    topk_sorted=runtime_topk_sorted,
+                    topk_sort_order=runtime_topk_sort_order,
+                    return_classids=self.enable_output_classids,
+                    return_grouped=True,
+                    return_indices=self.enable_output_indices,
                 ),
             )
             batch_size = yolo_output.shape[0]
@@ -380,19 +427,25 @@ class DynamicRoIAlignFromYolo(torch.nn.Module):
                         group_aligned_features.shape[3],
                     )
                 )
+            grouped_outputs: list[torch.Tensor] = list(grouped_features)
             if self.enable_output_classids:
-                return (*grouped_features, *grouped_class_ids)
-            return tuple(grouped_features)
+                grouped_outputs.extend(grouped_class_ids)
+            if self.enable_output_indices:
+                grouped_outputs.extend(grouped_yolo_candidate_indices)
+            return tuple(grouped_outputs)
 
-        rois, class_ids = typing.cast(
-            tuple[torch.Tensor, torch.Tensor],
+        rois, class_ids, yolo_candidate_indices = typing.cast(
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor],
             self.yolo_to_rois(
-                yolo_output,
-                input_images_or_features,
-                runtime_score_threshold,
-                runtime_use_topk,
-                runtime_topk_groups,
-                self.enable_output_classids,
+                yolo_output=yolo_output,
+                input_images_or_features=input_images_or_features,
+                score_threshold=runtime_score_threshold,
+                use_topk=runtime_use_topk,
+                topk_groups=runtime_topk_groups,
+                topk_sorted=runtime_topk_sorted,
+                topk_sort_order=runtime_topk_sort_order,
+                return_classids=self.enable_output_classids,
+                return_indices=self.enable_output_indices,
             ),
         )
 
@@ -404,9 +457,14 @@ class DynamicRoIAlignFromYolo(torch.nn.Module):
         if runtime_score_threshold is not None:
             # Filtering makes per-batch ROI counts data-dependent.
             # Keep flattened [num_rois, C, H, W] representation.
+            flattened_outputs: list[torch.Tensor] = [aligned_features]
             if self.enable_output_classids:
-                return aligned_features, class_ids
-            return aligned_features
+                flattened_outputs.append(class_ids)
+            if self.enable_output_indices:
+                flattened_outputs.append(yolo_candidate_indices)
+            if len(flattened_outputs) == 1:
+                return aligned_features
+            return tuple(flattened_outputs)
 
         # Preserve batch axis for the non-filtering case: [B, N, C, H, W].
         batch_size = yolo_output.shape[0]
@@ -420,10 +478,14 @@ class DynamicRoIAlignFromYolo(torch.nn.Module):
         out_h = aligned_features.shape[2]
         out_w = aligned_features.shape[3]
         reshaped_features = aligned_features.reshape(batch_size, num_candidates, channels, out_h, out_w)
+        shaped_outputs: list[torch.Tensor] = [reshaped_features]
         if self.enable_output_classids:
-            reshaped_class_ids = class_ids.reshape(batch_size, num_candidates)
-            return reshaped_features, reshaped_class_ids
-        return reshaped_features
+            shaped_outputs.append(class_ids.reshape(batch_size, num_candidates))
+        if self.enable_output_indices:
+            shaped_outputs.append(yolo_candidate_indices.reshape(batch_size, num_candidates))
+        if len(shaped_outputs) == 1:
+            return reshaped_features
+        return tuple(shaped_outputs)
 
 
 def _set_input_dim_param(model: onnx.ModelProto, input_name: str, axis: int, dim_param: str) -> None:
@@ -546,9 +608,26 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--enable-topk-sort",
+        action="store_true",
+        help="Enable score-sorted TopK output ordering (TopK sorted=true).",
+    )
+    parser.add_argument(
+        "--topk-sort-order",
+        type=str,
+        choices=["desc", "asc"],
+        default="desc",
+        help="TopK score direction: 'desc' uses largest=1, 'asc' uses largest=0. Default: desc.",
+    )
+    parser.add_argument(
         "--enable-output-classids",
         action="store_true",
         help="Add class_ids as an additional ONNX output aligned with selected ROIs.",
+    )
+    parser.add_argument(
+        "--enable-output-indices",
+        action="store_true",
+        help="Add yolo_candidate_indices as an ONNX output for original YOLO candidate-axis indices.",
     )
     parser.add_argument(
         "--topk-group-output-sizes",
@@ -720,8 +799,11 @@ if __name__ == "__main__":
         score_threshold=args.use_score_threshold,
         use_topk=args.use_topk,
         topk_groups=topk_groups,
+        topk_sorted=args.enable_topk_sort,
+        topk_sort_order=args.topk_sort_order,
         topk_group_output_sizes=topk_group_output_sizes,
         enable_output_classids=args.enable_output_classids,
+        enable_output_indices=args.enable_output_indices,
     )
 
     if dynamic_score_threshold:
@@ -741,9 +823,11 @@ if __name__ == "__main__":
 
     onnx_output_name = "aligned_features"
     class_ids_output_name = "class_ids"
+    yolo_candidate_indices_output_name = "yolo_candidate_indices"
     output_names: list[str] = []
     feature_output_names: list[str] = []
     class_ids_output_names: list[str] = []
+    yolo_candidate_indices_output_names: list[str] = []
     if grouped_output_sizes_enabled:
         typed_topk_groups = typing.cast(list[TopKGroupSpec], topk_groups)
         for group_index, (group_name, _, _) in enumerate(typed_topk_groups):
@@ -755,12 +839,20 @@ if __name__ == "__main__":
                 safe_group_name = _sanitize_output_suffix(group_name)
                 class_ids_output_names.append(f"class_ids_g{group_index}_{safe_group_name}")
             output_names.extend(class_ids_output_names)
+        if args.enable_output_indices:
+            for group_index, (group_name, _, _) in enumerate(typed_topk_groups):
+                safe_group_name = _sanitize_output_suffix(group_name)
+                yolo_candidate_indices_output_names.append(f"yolo_candidate_indices_g{group_index}_{safe_group_name}")
+            output_names.extend(yolo_candidate_indices_output_names)
     else:
         feature_output_names = [onnx_output_name]
         output_names = [onnx_output_name]
         if args.enable_output_classids:
             class_ids_output_names = [class_ids_output_name]
             output_names.append(class_ids_output_name)
+        if args.enable_output_indices:
+            yolo_candidate_indices_output_names = [yolo_candidate_indices_output_name]
+            output_names.append(yolo_candidate_indices_output_name)
 
     dynamic_axes = {
         "input_images_or_features": {},
@@ -792,6 +884,8 @@ if __name__ == "__main__":
                 dynamic_axes[feature_output_name][0] = "yolo_batch_size"
             for class_ids_name in class_ids_output_names:
                 dynamic_axes[class_ids_name][0] = "yolo_batch_size"
+            for yolo_candidate_indices_name in yolo_candidate_indices_output_names:
+                dynamic_axes[yolo_candidate_indices_name][0] = "yolo_batch_size"
         if args.input_channels is None:
             dynamic_axes["input_images_or_features"][1] = "channels"
             for feature_output_name in feature_output_names:
@@ -801,6 +895,8 @@ if __name__ == "__main__":
         dynamic_axes[onnx_output_name][0] = "num_rois"
         if args.enable_output_classids:
             dynamic_axes[class_ids_output_name][0] = "num_rois"
+        if args.enable_output_indices:
+            dynamic_axes[yolo_candidate_indices_output_name][0] = "num_rois"
         if args.input_channels is None:
             dynamic_axes["input_images_or_features"][1] = "channels"
             dynamic_axes[onnx_output_name][1] = "channels"
@@ -810,10 +906,14 @@ if __name__ == "__main__":
             dynamic_axes[onnx_output_name][0] = "yolo_batch_size"
             if args.enable_output_classids:
                 dynamic_axes[class_ids_output_name][0] = "yolo_batch_size"
+            if args.enable_output_indices:
+                dynamic_axes[yolo_candidate_indices_output_name][0] = "yolo_batch_size"
         if args.yolo_num_candidates is None and args.use_topk is None and topk_groups is None:
             dynamic_axes[onnx_output_name][1] = "num_candidates"
             if args.enable_output_classids:
                 dynamic_axes[class_ids_output_name][1] = "num_candidates"
+            if args.enable_output_indices:
+                dynamic_axes[yolo_candidate_indices_output_name][1] = "num_candidates"
         if args.input_channels is None:
             dynamic_axes["input_images_or_features"][1] = "channels"
             dynamic_axes[onnx_output_name][2] = "channels"
@@ -970,15 +1070,21 @@ if __name__ == "__main__":
         _set_output_dim_param(simplified_model, onnx_output_name, 0, "num_rois")
         if args.enable_output_classids:
             _set_output_dim_param(simplified_model, class_ids_output_name, 0, "num_rois")
+        if args.enable_output_indices:
+            _set_output_dim_param(simplified_model, yolo_candidate_indices_output_name, 0, "num_rois")
     else:
         if args.yolo_batch_size is None:
             _set_output_dim_param(simplified_model, onnx_output_name, 0, "yolo_batch_size")
             if args.enable_output_classids:
                 _set_output_dim_param(simplified_model, class_ids_output_name, 0, "yolo_batch_size")
+            if args.enable_output_indices:
+                _set_output_dim_param(simplified_model, yolo_candidate_indices_output_name, 0, "yolo_batch_size")
         if args.yolo_num_candidates is None and args.use_topk is None and topk_groups is None:
             _set_output_dim_param(simplified_model, onnx_output_name, 1, "num_candidates")
             if args.enable_output_classids:
                 _set_output_dim_param(simplified_model, class_ids_output_name, 1, "num_candidates")
+            if args.enable_output_indices:
+                _set_output_dim_param(simplified_model, yolo_candidate_indices_output_name, 1, "num_candidates")
     if dynamic_output_height:
         _set_output_dim_param(simplified_model, onnx_output_name, output_axis_h, "output_H")
     if dynamic_output_width:
@@ -994,10 +1100,13 @@ if __name__ == "__main__":
         "score_threshold_as_input",
         "score_threshold",
         "use_topk",
+        "topk_sorted",
+        "topk_sort_order",
         "use_topk_groups",
         "topk_groups",
         "topk_group_output_sizes",
         "enable_output_classids",
+        "enable_output_indices",
         "input_hw_size",
         "output_height",
         "output_width",
@@ -1027,8 +1136,11 @@ if __name__ == "__main__":
     elif dynamic_score_threshold:
         model_metadata["score_threshold"] = "Runtime scalar input: score_threshold"
     model_metadata["use_topk"] = "disabled" if args.use_topk is None else str(args.use_topk)
+    model_metadata["topk_sorted"] = str(args.enable_topk_sort).lower()
+    model_metadata["topk_sort_order"] = args.topk_sort_order
     model_metadata["use_topk_groups"] = str(topk_groups is not None).lower()
     model_metadata["enable_output_classids"] = str(args.enable_output_classids).lower()
+    model_metadata["enable_output_indices"] = str(args.enable_output_indices).lower()
     if topk_groups is not None:
         model_metadata["topk_groups"] = "; ".join(
             f"{name}:{group_topk}:{','.join(str(class_id) for class_id in class_ids)}"
@@ -1071,6 +1183,11 @@ if __name__ == "__main__":
                     f"Class id shape for group '{group_name}': [B, K]\n"
                     "Each value is the selected class id for corresponding ROI"
                 )
+            if args.enable_output_indices:
+                model_metadata[yolo_candidate_indices_output_names[group_index]] = (
+                    f"Candidate index shape for group '{group_name}': [B, K]\n"
+                    "Each value is the original yolo_output candidate-axis index"
+                )
     elif output_is_flattened:
         model_metadata[onnx_output_name] = (
             "Aligned ROI features shape: [num_rois, C, output_H, output_W]\n"
@@ -1080,6 +1197,11 @@ if __name__ == "__main__":
             model_metadata[class_ids_output_name] = (
                 "Class id shape: [num_rois]\n"
                 "Each value is the selected class id for corresponding ROI"
+            )
+        if args.enable_output_indices:
+            model_metadata[yolo_candidate_indices_output_name] = (
+                "Candidate index shape: [num_rois]\n"
+                "Each value is the original yolo_output candidate-axis index"
             )
     elif topk_groups is not None:
         total_group_topk = sum(group_topk for _, group_topk, _ in topk_groups)
@@ -1092,6 +1214,11 @@ if __name__ == "__main__":
                 "Class id shape: [B, K_total]\n"
                 "K_total follows grouped top-K ROI ordering"
             )
+        if args.enable_output_indices:
+            model_metadata[yolo_candidate_indices_output_name] = (
+                "Candidate index shape: [B, K_total]\n"
+                "K_total follows grouped top-K ROI ordering"
+            )
     elif args.use_topk is not None:
         model_metadata[onnx_output_name] = (
             "Aligned ROI features shape: [B, K, C, output_H, output_W]\n"
@@ -1102,6 +1229,11 @@ if __name__ == "__main__":
                 "Class id shape: [B, K]\n"
                 "K follows top-K ROI ordering"
             )
+        if args.enable_output_indices:
+            model_metadata[yolo_candidate_indices_output_name] = (
+                "Candidate index shape: [B, K]\n"
+                "K follows top-K ROI ordering"
+            )
     else:
         model_metadata[onnx_output_name] = (
             "Aligned ROI features shape: [B, N, C, output_H, output_W]\n"
@@ -1110,6 +1242,11 @@ if __name__ == "__main__":
         if args.enable_output_classids:
             model_metadata[class_ids_output_name] = (
                 "Class id shape: [B, N]\n"
+                "N: number of candidates"
+            )
+        if args.enable_output_indices:
+            model_metadata[yolo_candidate_indices_output_name] = (
+                "Candidate index shape: [B, N]\n"
                 "N: number of candidates"
             )
     onnx.helper.set_model_props(simplified_model, model_metadata)

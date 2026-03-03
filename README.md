@@ -183,8 +183,11 @@ python 02_dynamic_roi_align_yolo.py \
   [--onnx-output-path ONNX_OUTPUT_PATH] \
   [--use-topk USE_TOPK] \
   [--use-topk-group NAME:K:CLASS_IDS] \
+  [--enable-topk-sort] \
+  [--topk-sort-order {desc,asc}] \
   [--topk-group-output-sizes H,W [H,W ...]] \
   [--enable-output-classids] \
+  [--enable-output-indices] \
   [--use-score-threshold USE_SCORE_THRESHOLD] \
   [--score-threshold-as-input] \
   [--aligned | --no-aligned]
@@ -204,8 +207,11 @@ Option summary:
 - `--onnx-output-path`: export destination path.
 - `--use-topk`: keep top-K candidates per batch using YOLO class scores. Requires `K >= 1`.
 - `--use-topk-group`: grouped top-K filtering using `NAME:K:CLASS_IDS`. You can pass multiple groups in one flag use (example: `--use-topk-group body:8:0,1,2 head:12:7,8,9`) and/or repeat the flag.
+- `--enable-topk-sort`: enable ordered TopK output (`TopK(sorted=True)`) for both `--use-topk` and `--use-topk-group`. If omitted, `sorted=False`.
+- `--topk-sort-order`: choose TopK direction. `desc` uses `largest=True` (default), `asc` uses `largest=False`.
 - `--topk-group-output-sizes`: ROI output size(s) in `H,W` format. Without `--use-topk-group`, specify exactly one pair (global fixed ROI size). With `--use-topk-group`, specify one shared pair or one pair per group.
 - `--enable-output-classids`: add `class_ids` as an additional ONNX output aligned with selected ROI order.
+- `--enable-output-indices`: add `yolo_candidate_indices` as an additional ONNX output aligned with selected ROI order. Values are original `yolo_output` candidate-axis indices (`N` axis).
 - `--use-score-threshold`: enable score filtering with a fixed threshold value in `[0.001, 1.000]`.
 - `--score-threshold-as-input`: enable score filtering and expose `score_threshold` as a runtime scalar ONNX input.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
@@ -241,6 +247,8 @@ When top-K filtering is enabled (`--use-topk`):
 2. Top-K candidates per batch are selected using `TopK`.
 3. Output shape becomes `[B, K, C, output_H, output_W]`.
 4. `K` must be `<= N` at runtime.
+5. Add `--enable-topk-sort` to export `TopK(sorted=True)`; default is `sorted=False`.
+6. `--topk-sort-order desc|asc` controls `largest` (`desc`: `largest=True`, `asc`: `largest=False`).
 
 When grouped top-K filtering is enabled (`--use-topk-group`):
 
@@ -249,6 +257,8 @@ When grouped top-K filtering is enabled (`--use-topk-group`):
 3. Group-wise `TopK(K)` is applied independently, and selected ROIs are concatenated.
 4. Output shape becomes `[B, K_total, C, output_H, output_W]` where `K_total = sum(K_i)`.
 5. `--use-topk-group`, `--use-topk`, `--use-score-threshold`, and `--score-threshold-as-input` are mutually exclusive.
+6. Add `--enable-topk-sort` to export each group TopK with `sorted=True`; default is `sorted=False`.
+7. `--topk-sort-order desc|asc` controls `largest` for each group (`desc`: `largest=True`, `asc`: `largest=False`).
 
 When `--topk-group-output-sizes` is used together with `--use-topk-group`:
 
@@ -291,8 +301,8 @@ Note:
 - Input name: `yolo_output`
 - Optional input names: `output_height`, `output_width` (only when `--topk-group-output-sizes` is omitted), `score_threshold` (when `--score-threshold-as-input` is used)
 - Output name: `aligned_features`
-- Optional output name: `class_ids` (when `--enable-output-classids` is used)
-- Grouped-size output names: `aligned_features_g{idx}_{group}` (and optional `class_ids_g{idx}_{group}`) when `--topk-group-output-sizes` is used
+- Optional output names: `class_ids` (when `--enable-output-classids` is used), `yolo_candidate_indices` (when `--enable-output-indices` is used)
+- Grouped-size output names: `aligned_features_g{idx}_{group}` (and optional `class_ids_g{idx}_{group}`, `yolo_candidate_indices_g{idx}_{group}`) when `--topk-group-output-sizes` is used
 
 ### Metadata written to ONNX
 
@@ -301,9 +311,10 @@ The script adds descriptions to ONNX metadata for:
 - `input_images_or_features`
 - `yolo_output`
 - `yolo_box_format`
-- `use_score_threshold`, `score_threshold_as_input`, `use_topk`, `use_topk_groups`, `topk_groups` (`score_threshold` is added when enabled)
+- `use_score_threshold`, `score_threshold_as_input`, `use_topk`, `topk_sorted`, `topk_sort_order`, `use_topk_groups`, `topk_groups` (`score_threshold` is added when enabled)
 - `topk_group_output_sizes` (when group-wise output sizes are enabled)
 - `enable_output_classids` (`class_ids` output description is added when enabled)
+- `enable_output_indices` (`yolo_candidate_indices` output description is added when enabled)
 - `aligned`
 - `aligned_features`
 - `input_hw_size` (only when fixed input size is used)
@@ -411,6 +422,14 @@ head:12:7,8,9,10,11,12,13,14,15 \
 --topk-group-output-sizes 128,64 96,48
 ```
 
+13. Export YOLO candidate indices alongside top-K output:
+
+```bash
+python 02_dynamic_roi_align_yolo.py \
+--use-topk 300 \
+--enable-output-indices
+```
+
 ### Detailed grouped top-K patterns
 
 **Pattern A: Single group + single class (minimum graph path)**
@@ -425,6 +444,9 @@ python 02_dynamic_roi_align_yolo.py \
 --yolo-num-candidates 6300 \
 --use-topk-group \
 body:10:0 \
+--enable-topk-sort \
+--topk-sort-order desc \
+--enable-output-indices \
 --topk-group-output-sizes 128,64
 ```
 
@@ -434,7 +456,7 @@ body:10:0 \
 - Output shape: `[1, 10, 3, 128, 64]`.
 - ONNX inputs: no `output_height`/`output_width` scalar inputs (size is fixed by `--topk-group-output-sizes`).
 
-**Pattern B: Two groups + different ROI sizes + class id outputs**
+**Pattern B: Two groups + different ROI sizes + class id / candidate-index outputs**
 
 ```bash
 python 02_dynamic_roi_align_yolo.py \
@@ -447,7 +469,10 @@ python 02_dynamic_roi_align_yolo.py \
 --use-topk-group \
 body:40:0,1,2,3,4,5,6 \
 head:20:7,8,9,10,11,12,13,14,15 \
+--enable-topk-sort \
+--topk-sort-order desc \
 --enable-output-classids \
+--enable-output-indices \
 --topk-group-output-sizes 128,64 32,32
 ```
 
@@ -459,6 +484,9 @@ head:20:7,8,9,10,11,12,13,14,15 \
 - Class-id outputs:
 - `class_ids_g0_body`: `[1, 40]`
 - `class_ids_g1_head`: `[1, 20]`
+- Candidate-index outputs:
+- `yolo_candidate_indices_g0_body`: `[1, 40]`
+- `yolo_candidate_indices_g1_head`: `[1, 20]`
 
 **Pattern C: Multi-group wholebody setting + shared ROI size**
 
@@ -476,16 +504,20 @@ mouth:10:19 \
 ear:20:20 \
 hand:20:21,22,23 \
 foot:20:24 \
+--enable-topk-sort \
+--topk-sort-order desc \
 --enable-output-classids \
+--enable-output-indices \
 --topk-group-output-sizes 128,64
 ```
 
 - Group count: 9 (`body`, `head`, `face`, `eye`, `nose`, `mouth`, `ear`, `hand`, `foot`).
 - `--topk-group-output-sizes 128,64` is broadcast to all groups.
 - Total selected boxes per batch: `10 + 10 + 10 + 20 + 10 + 10 + 20 + 20 + 20 = 130`.
-- Outputs: 9 ROI feature outputs + 9 class-id outputs (18 outputs total).
+- Outputs: 9 ROI feature outputs + 9 class-id outputs + 9 candidate-index outputs (27 outputs total).
 - Feature shape per output: `[B, K_group, C, 128, 64]` (`B` and `C` can remain dynamic when not fixed by CLI).
 - Class-id shape per output: `[B, K_group]`.
+- Candidate-index shape per output: `[B, K_group]` (index over original YOLO candidate axis `N`).
 
 <a id="variant-03"></a>
 ## 03_dynamic_roi_align_vit.py Usage
@@ -525,8 +557,11 @@ python 03_dynamic_roi_align_vit.py \
   [--onnx-output-path ONNX_OUTPUT_PATH] \
   [--use-topk USE_TOPK] \
   [--use-topk-group NAME:K:LABEL_IDS] \
+  [--enable-topk-sort] \
+  [--topk-sort-order {desc,asc}] \
   [--topk-group-output-sizes H,W [H,W ...]] \
   [--enable-output-classids] \
+  [--enable-output-indices] \
   [--use-score-threshold USE_SCORE_THRESHOLD] \
   [--score-threshold-as-input] \
   [--aligned | --no-aligned]
@@ -546,8 +581,11 @@ Option summary:
 - `--onnx-output-path`: export destination path.
 - `--use-topk`: keep top-K queries per batch using score field `field[5]`. Requires `K >= 1`.
 - `--use-topk-group`: grouped top-K filtering using `NAME:K:LABEL_IDS`. You can pass multiple groups in one flag use (example: `--use-topk-group body:8:0,1,2 head:12:7,8,9`) and/or repeat the flag.
+- `--enable-topk-sort`: enable ordered TopK output (`TopK(sorted=True)`) for both `--use-topk` and `--use-topk-group`. If omitted, `sorted=False`.
+- `--topk-sort-order`: choose TopK direction. `desc` uses `largest=True` (default), `asc` uses `largest=False`.
 - `--topk-group-output-sizes`: ROI output size(s) in `H,W` format. Without `--use-topk-group`, specify exactly one pair (global fixed ROI size). With `--use-topk-group`, specify one shared pair or one pair per group.
 - `--enable-output-classids`: add `class_ids` as an additional ONNX output aligned with selected ROI order.
+- `--enable-output-indices`: add `vit_query_indices` as an additional ONNX output aligned with selected ROI order. Values are original `vit_output` query-axis indices (`Q` axis).
 - `--use-score-threshold`: enable score filtering with a fixed threshold value in `[0.001, 1.000]`.
 - `--score-threshold-as-input`: enable score filtering and expose `score_threshold` as a runtime scalar ONNX input.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
@@ -589,6 +627,8 @@ When top-K filtering is enabled (`--use-topk`):
 2. Top-K queries per batch are selected using `TopK`.
 3. Output shape becomes `[B, K, C, output_H, output_W]`.
 4. `K` must be `<= Q` at runtime.
+5. Add `--enable-topk-sort` to export `TopK(sorted=True)`; default is `sorted=False`.
+6. `--topk-sort-order desc|asc` controls `largest` (`desc`: `largest=True`, `asc`: `largest=False`).
 
 When grouped top-K filtering is enabled (`--use-topk-group`):
 
@@ -597,6 +637,8 @@ When grouped top-K filtering is enabled (`--use-topk-group`):
 3. Group-wise `TopK(K)` is applied independently, and selected ROIs are concatenated.
 4. Output shape becomes `[B, K_total, C, output_H, output_W]` where `K_total = sum(K_i)`.
 5. `--use-topk-group`, `--use-topk`, `--use-score-threshold`, and `--score-threshold-as-input` are mutually exclusive.
+6. Add `--enable-topk-sort` to export each group TopK with `sorted=True`; default is `sorted=False`.
+7. `--topk-sort-order desc|asc` controls `largest` for each group (`desc`: `largest=True`, `asc`: `largest=False`).
 
 When `--topk-group-output-sizes` is used together with `--use-topk-group`:
 
@@ -638,8 +680,8 @@ Note:
 - Input name: `vit_output`
 - Optional input names: `output_height`, `output_width` (only when `--topk-group-output-sizes` is omitted), `score_threshold` (when `--score-threshold-as-input` is used)
 - Output name: `aligned_features`
-- Optional output name: `class_ids` (when `--enable-output-classids` is used)
-- Grouped-size output names: `aligned_features_g{idx}_{group}` (and optional `class_ids_g{idx}_{group}`) when `--topk-group-output-sizes` is used
+- Optional output names: `class_ids` (when `--enable-output-classids` is used), `vit_query_indices` (when `--enable-output-indices` is used)
+- Grouped-size output names: `aligned_features_g{idx}_{group}` (and optional `class_ids_g{idx}_{group}`, `vit_query_indices_g{idx}_{group}`) when `--topk-group-output-sizes` is used
 
 ### Metadata written to ONNX
 
@@ -648,9 +690,10 @@ The script adds descriptions to ONNX metadata for:
 - `input_images_or_features`
 - `vit_output`
 - `vit_box_format`
-- `use_score_threshold`, `score_threshold_as_input`, `use_topk`, `use_topk_groups`, `topk_groups` (`score_threshold` is added when enabled)
+- `use_score_threshold`, `score_threshold_as_input`, `use_topk`, `topk_sorted`, `topk_sort_order`, `use_topk_groups`, `topk_groups` (`score_threshold` is added when enabled)
 - `topk_group_output_sizes` (when group-wise output sizes are enabled)
 - `enable_output_classids` (`class_ids` output description is added when enabled)
+- `enable_output_indices` (`vit_query_indices` output description is added when enabled)
 - `aligned`
 - `aligned_features`
 - `input_hw_size` (only when fixed input size is used)
@@ -736,7 +779,15 @@ head:20:7,8,9,10,11,12,13,14,15 \
 --enable-output-classids
 ```
 
-11. Use group-wise ROI output sizes (single pair shared across groups):
+11. Export query indices as an additional output:
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--use-topk 200 \
+--enable-output-indices
+```
+
+12. Use group-wise ROI output sizes (single pair shared across groups):
 
 ```bash
 python 03_dynamic_roi_align_vit.py \
@@ -747,7 +798,7 @@ head:20:7,8,9,10,11,12,13,14,15 \
 --enable-output-classids
 ```
 
-12. Use different ROI output sizes per group:
+13. Use different ROI output sizes per group:
 
 ```bash
 python 03_dynamic_roi_align_vit.py \
@@ -757,3 +808,100 @@ head:20:7,8,9,10,11,12,13,14,15 \
 --topk-group-output-sizes 128,64 32,32 \
 --enable-output-classids
 ```
+
+14. Enable sorted TopK output ordering:
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--use-topk 200 \
+--enable-topk-sort
+```
+
+### Detailed grouped top-K patterns
+
+**Pattern A: Single group + single label (minimum graph path)**
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--input-batch-size 1 \
+--input-channels 3 \
+--input-hw-size 480 640 \
+--vit-batch-size 1 \
+--vit-num-queries 680 \
+--vit-output-fields 6 \
+--use-topk-group \
+body:10:0 \
+--enable-topk-sort \
+--topk-sort-order desc \
+--enable-output-indices \
+--topk-group-output-sizes 128,64
+```
+
+- Group definition: one group (`body`) with `K=10`, label set `{0}`.
+- Score path: score field `field[5]` is masked by label-0 condition and fed to `TopK`.
+- Output names: `aligned_features_g0_body`.
+- Output shape: `[1, 10, 3, 128, 64]`.
+- ONNX inputs: no `output_height`/`output_width` scalar inputs (size is fixed by `--topk-group-output-sizes`).
+
+**Pattern B: Two groups + different ROI sizes + class id / query-index outputs**
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--input-batch-size 1 \
+--input-channels 3 \
+--input-hw-size 480 640 \
+--vit-batch-size 1 \
+--vit-num-queries 680 \
+--vit-output-fields 6 \
+--use-topk-group \
+body:40:0,1,2,3,4,5,6 \
+head:20:7,8,9,10,11,12,13,14,15 \
+--enable-topk-sort \
+--topk-sort-order desc \
+--enable-output-classids \
+--enable-output-indices \
+--topk-group-output-sizes 128,64 32,32
+```
+
+- Group definition: `body` (`K=40`) and `head` (`K=20`), each with multi-label query filtering.
+- Score path: each group applies label-mask over queries then runs `TopK` on score field `field[5]`.
+- ROI outputs:
+- `aligned_features_g0_body`: `[1, 40, 3, 128, 64]`
+- `aligned_features_g1_head`: `[1, 20, 3, 32, 32]`
+- Class-id outputs:
+- `class_ids_g0_body`: `[1, 40]`
+- `class_ids_g1_head`: `[1, 20]`
+- Query-index outputs:
+- `vit_query_indices_g0_body`: `[1, 40]`
+- `vit_query_indices_g1_head`: `[1, 20]`
+
+**Pattern C: Multi-group wholebody setting + shared ROI size**
+
+```bash
+python 03_dynamic_roi_align_vit.py \
+--vit-output-fields 6 \
+--vit-num-queries 680 \
+--use-topk-group \
+body:10:0,1,2,3,4,5,6 \
+head:10:7,8,9,10,11,12,13,14,15 \
+face:10:16 \
+eye:20:17 \
+nose:10:18 \
+mouth:10:19 \
+ear:20:20 \
+hand:20:21,22,23 \
+foot:20:24 \
+--enable-topk-sort \
+--topk-sort-order desc \
+--enable-output-classids \
+--enable-output-indices \
+--topk-group-output-sizes 128,64
+```
+
+- Group count: 9 (`body`, `head`, `face`, `eye`, `nose`, `mouth`, `ear`, `hand`, `foot`).
+- `--topk-group-output-sizes 128,64` is broadcast to all groups.
+- Total selected queries per batch: `10 + 10 + 10 + 20 + 10 + 10 + 20 + 20 + 20 = 130`.
+- Outputs: 9 ROI feature outputs + 9 class-id outputs + 9 query-index outputs (27 outputs total).
+- Feature shape per output: `[B, K_group, C, 128, 64]` (`B` and `C` can remain dynamic when not fixed by CLI).
+- Class-id shape per output: `[B, K_group]`.
+- Query-index shape per output: `[B, K_group]` (index over original ViT query axis `Q`).
