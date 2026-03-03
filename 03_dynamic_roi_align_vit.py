@@ -27,7 +27,12 @@ class VitOutputToRois(torch.nn.Module):
         self.box_format = box_format
         self.score_threshold = score_threshold
 
-    def forward(self, vit_output: torch.Tensor, input_images_or_features: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        vit_output: torch.Tensor,
+        input_images_or_features: torch.Tensor,
+        score_threshold: Optional[torch.Tensor | float] = None,
+    ) -> torch.Tensor:
         # vit_output: [B, Q, F], expected field order:
         # [label, x1, y1, x2, y2, score] for xyxy
         # [label, cx, cy, w, h, score] for xywh
@@ -71,9 +76,25 @@ class VitOutputToRois(torch.nn.Module):
 
         rois = torch.stack([batch_indices, x_min, y_min, x_max, y_max], dim=2).reshape(-1, 5)
 
-        if self.score_threshold is not None:
+        effective_score_threshold = score_threshold
+        if effective_score_threshold is None:
+            effective_score_threshold = self.score_threshold
+
+        if effective_score_threshold is not None:
+            if not torch.is_tensor(effective_score_threshold):
+                effective_score_threshold = torch.tensor(
+                    effective_score_threshold,
+                    dtype=vit_output.dtype,
+                    device=vit_output.device,
+                )
+            else:
+                effective_score_threshold = effective_score_threshold.to(
+                    dtype=vit_output.dtype,
+                    device=vit_output.device,
+                ).reshape(())
+
             score = vit_output[:, :, 5]
-            score_mask = score >= self.score_threshold
+            score_mask = score >= effective_score_threshold
             rois = rois[score_mask.reshape(-1)]
 
         return rois
@@ -101,14 +122,26 @@ class DynamicRoIAlignFromVit(torch.nn.Module):
         vit_output: torch.Tensor,
         output_height: Optional[torch.Tensor | int],
         output_width: Optional[torch.Tensor | int],
+        score_threshold: Optional[torch.Tensor | float] = None,
     ) -> torch.Tensor:
-        rois = typing.cast(torch.Tensor, self.vit_to_rois(vit_output, input_images_or_features))
+        runtime_score_threshold = score_threshold
+        if runtime_score_threshold is None:
+            runtime_score_threshold = self.vit_to_rois.score_threshold
+
+        rois = typing.cast(
+            torch.Tensor,
+            self.vit_to_rois(
+                vit_output,
+                input_images_or_features,
+                runtime_score_threshold,
+            ),
+        )
         aligned_features = typing.cast(
             torch.Tensor,
             self.roi_align(input_images_or_features, rois, output_height, output_width),
         )
 
-        if self.vit_to_rois.score_threshold is not None:
+        if runtime_score_threshold is not None:
             # Filtering makes per-batch ROI counts data-dependent.
             # Keep flattened [num_rois, C, H, W] representation.
             return aligned_features
@@ -219,6 +252,11 @@ if __name__ == "__main__":
         default=None,
         help="Enable score filtering with threshold in [0.001, 1.000].",
     )
+    parser.add_argument(
+        "--score-threshold-as-input",
+        action="store_true",
+        help="Enable score filtering and expose score_threshold as a runtime scalar ONNX input.",
+    )
 
     aligned_group = parser.add_mutually_exclusive_group()
     aligned_group.add_argument(
@@ -259,7 +297,9 @@ if __name__ == "__main__":
         raise ValueError("--batch-size and --vit-batch-size must match when both are specified")
     if args.use_score_threshold is not None and not (0.001 <= args.use_score_threshold <= 1.0):
         raise ValueError("--use-score-threshold must be in the range [0.001, 1.000]")
-    if args.use_score_threshold is not None and args.vit_output_fields is not None and args.vit_output_fields < 6:
+    if args.use_score_threshold is not None and args.score_threshold_as_input:
+        raise ValueError("--use-score-threshold and --score-threshold-as-input are mutually exclusive")
+    if (args.use_score_threshold is not None or args.score_threshold_as_input) and args.vit_output_fields is not None and args.vit_output_fields < 6:
         raise ValueError("--vit-output-fields must be >= 6 when score filtering is enabled")
 
     if args.spatial_scale is None:
@@ -305,6 +345,7 @@ if __name__ == "__main__":
 
     dynamic_output_height = args.output_height is None
     dynamic_output_width = args.output_width is None
+    dynamic_score_threshold = args.score_threshold_as_input
     output_height = args.output_height if args.output_height is not None else 7
     output_width = args.output_width if args.output_width is not None else 7
 
@@ -315,7 +356,16 @@ if __name__ == "__main__":
         score_threshold=args.use_score_threshold,
     )
 
-    output = integrated_module(input_images_or_features, vit_output, output_height, output_width)
+    if dynamic_score_threshold:
+        output = integrated_module(
+            input_images_or_features,
+            vit_output,
+            output_height,
+            output_width,
+            torch.tensor(0.25, dtype=vit_output.dtype),
+        )
+    else:
+        output = integrated_module(input_images_or_features, vit_output, output_height, output_width)
     print("Output shape:", output.shape)
 
     onnx_output_name = "aligned_features"
@@ -335,7 +385,7 @@ if __name__ == "__main__":
     if args.vit_output_fields is None:
         dynamic_axes["vit_output"][2] = "vit_output_fields"
 
-    output_is_flattened = args.use_score_threshold is not None
+    output_is_flattened = args.use_score_threshold is not None or dynamic_score_threshold
 
     if output_is_flattened:
         # Output: [num_rois, C, H, W]
@@ -384,10 +434,17 @@ if __name__ == "__main__":
                 input_images_or_features: torch.Tensor,
                 vit_output: torch.Tensor,
                 output_height: torch.Tensor,
+                score_threshold: Optional[torch.Tensor | float] = None,
             ) -> torch.Tensor:
                 return typing.cast(
                     torch.Tensor,
-                    self.module(input_images_or_features, vit_output, output_height, self.fixed_width),
+                    self.module(
+                        input_images_or_features,
+                        vit_output,
+                        output_height,
+                        self.fixed_width,
+                        score_threshold,
+                    ),
                 )
 
         export_module = ExportFixedWidth(integrated_module, output_width)
@@ -407,10 +464,17 @@ if __name__ == "__main__":
                 input_images_or_features: torch.Tensor,
                 vit_output: torch.Tensor,
                 output_width: torch.Tensor,
+                score_threshold: Optional[torch.Tensor | float] = None,
             ) -> torch.Tensor:
                 return typing.cast(
                     torch.Tensor,
-                    self.module(input_images_or_features, vit_output, self.fixed_height, output_width),
+                    self.module(
+                        input_images_or_features,
+                        vit_output,
+                        self.fixed_height,
+                        output_width,
+                        score_threshold,
+                    ),
                 )
 
         export_module = ExportFixedHeight(integrated_module, output_height)
@@ -426,14 +490,30 @@ if __name__ == "__main__":
                 self.fixed_height = fixed_height
                 self.fixed_width = fixed_width
 
-            def forward(self, input_images_or_features: torch.Tensor, vit_output: torch.Tensor) -> torch.Tensor:
+            def forward(
+                self,
+                input_images_or_features: torch.Tensor,
+                vit_output: torch.Tensor,
+                score_threshold: Optional[torch.Tensor | float] = None,
+            ) -> torch.Tensor:
                 return typing.cast(
                     torch.Tensor,
-                    self.module(input_images_or_features, vit_output, self.fixed_height, self.fixed_width),
+                    self.module(
+                        input_images_or_features,
+                        vit_output,
+                        self.fixed_height,
+                        self.fixed_width,
+                        score_threshold,
+                    ),
                 )
 
         export_module = ExportFixedOutputSize(integrated_module, output_height, output_width)
         export_args = (input_images_or_features, vit_output)
+
+    if dynamic_score_threshold:
+        export_args = (*export_args, torch.tensor(0.25, dtype=vit_output.dtype))
+        input_names.append("score_threshold")
+        dynamic_axes["score_threshold"] = {}
 
     onnx_model_path = args.onnx_output_path
     print("\nTesting ONNX export...")
@@ -486,6 +566,7 @@ if __name__ == "__main__":
         "aligned",
         "vit_box_format",
         "use_score_threshold",
+        "score_threshold_as_input",
         "score_threshold",
         "output_height",
         "output_width",
@@ -510,8 +591,11 @@ if __name__ == "__main__":
     )
     model_metadata["vit_box_format"] = args.vit_box_format
     model_metadata["use_score_threshold"] = str(args.use_score_threshold is not None).lower()
+    model_metadata["score_threshold_as_input"] = str(dynamic_score_threshold).lower()
     if args.use_score_threshold is not None:
         model_metadata["score_threshold"] = f"{args.use_score_threshold:.3f}"
+    elif dynamic_score_threshold:
+        model_metadata["score_threshold"] = "Runtime scalar input: score_threshold"
     model_metadata["aligned"] = (
         "ROIAlign aligned mode (bool)\n"
         f"Current export value: {str(args.aligned).lower()}"

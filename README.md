@@ -168,6 +168,7 @@ python 02_dynamic_roi_align_yolo.py \
   [--yolo-box-format {xywh,xyxy}] \
   [--onnx-output-path ONNX_OUTPUT_PATH] \
   [--use-score-threshold USE_SCORE_THRESHOLD] \
+  [--score-threshold-as-input] \
   [--aligned | --no-aligned]
 ```
 
@@ -184,7 +185,8 @@ Option summary:
 - `--yolo-num-candidates`: fix YOLO output axis-2 (`N`). Omit to keep dynamic.
 - `--yolo-box-format`: interpretation of first 4 YOLO channels (`xywh` or `xyxy`).
 - `--onnx-output-path`: export destination path.
-- `--use-score-threshold`: enable score filtering with threshold value in `[0.001, 1.000]`.
+- `--use-score-threshold`: enable score filtering with a fixed threshold value in `[0.001, 1.000]`.
+- `--score-threshold-as-input`: enable score filtering and expose `score_threshold` as a runtime scalar ONNX input.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
 
 ### YOLO output behavior (important)
@@ -202,11 +204,12 @@ Box conversion behavior:
 3. `rois` are generated as `[batch_idx, x1, y1, x2, y2]`.
 4. ROI count is `B * N`.
 
-When `--use-score-threshold` is specified:
+When score filtering is enabled (`--use-score-threshold` or `--score-threshold-as-input`):
 
 1. Score filtering is applied directly from YOLO class scores (`yolo_output[:, 4:, :]`).
 2. Candidates with `max(class_scores) >= threshold` are kept.
 3. Output is flattened as `[num_rois, C, output_H, output_W]` because candidate count becomes data-dependent.
+4. `--use-score-threshold` and `--score-threshold-as-input` are mutually exclusive.
 
 For typical YOLOv9 wholebody output (`[1, 29, 6300]`), use:
 
@@ -234,7 +237,7 @@ Note:
 
 - Input name: `input_images_or_features`
 - Input name: `yolo_output`
-- Optional input names: `output_height`, `output_width` (only when dynamic)
+- Optional input names: `output_height`, `output_width` (only when dynamic), `score_threshold` (when `--score-threshold-as-input` is used)
 - Output name: `aligned_features`
 
 ### Metadata written to ONNX
@@ -244,7 +247,7 @@ The script adds descriptions to ONNX metadata for:
 - `input_images_or_features`
 - `yolo_output`
 - `yolo_box_format`
-- `use_score_threshold` (`score_threshold` is added when enabled)
+- `use_score_threshold`, `score_threshold_as_input` (`score_threshold` is added when enabled)
 - `aligned`
 - `aligned_features`
 - `output_height` (only when fixed output height is used)
@@ -295,6 +298,12 @@ python 02_dynamic_roi_align_yolo.py --onnx-output-path out/roi_align_yolo.onnx
 python 02_dynamic_roi_align_yolo.py --use-score-threshold 0.250
 ```
 
+7. Expose score threshold as runtime ONNX input:
+
+```bash
+python 02_dynamic_roi_align_yolo.py --score-threshold-as-input
+```
+
 <a id="variant-03"></a>
 ## 03_dynamic_roi_align_vit.py Usage
 
@@ -333,6 +342,7 @@ python 03_dynamic_roi_align_vit.py \
   [--vit-box-format {xyxy,xywh}] \
   [--onnx-output-path ONNX_OUTPUT_PATH] \
   [--use-score-threshold USE_SCORE_THRESHOLD] \
+  [--score-threshold-as-input] \
   [--aligned | --no-aligned]
 ```
 
@@ -349,7 +359,8 @@ Option summary:
 - `--vit-output-fields`: fix ViT output axis-2 (`F`). Omit to keep dynamic.
 - `--vit-box-format`: interpretation of fields `1:5` in ViT output (`xyxy` or `xywh`).
 - `--onnx-output-path`: export destination path.
-- `--use-score-threshold`: enable score filtering with threshold value in `[0.001, 1.000]`.
+- `--use-score-threshold`: enable score filtering with a fixed threshold value in `[0.001, 1.000]`.
+- `--score-threshold-as-input`: enable score filtering and expose `score_threshold` as a runtime scalar ONNX input.
 - `--aligned` / `--no-aligned`: switch ROIAlign alignment behavior (`align_corners=True/False`). Default is `--no-aligned`.
 
 ### ViT output behavior (important)
@@ -373,11 +384,12 @@ Box conversion behavior:
 3. `rois` are generated as `[batch_idx, x1, y1, x2, y2]`.
 4. ROI count is `B * Q`.
 
-When `--use-score-threshold` is specified:
+When score filtering is enabled (`--use-score-threshold` or `--score-threshold-as-input`):
 
 1. Filtering uses `field[5]` as score.
 2. Queries with `score >= threshold` are kept.
 3. Output is flattened as `[num_rois, C, output_H, output_W]` because ROI count becomes data-dependent.
+4. `--use-score-threshold` and `--score-threshold-as-input` are mutually exclusive.
 
 For typical DEIMv2 output (`[N, 680, 6]`), use:
 
@@ -404,7 +416,7 @@ Note:
 
 - Input name: `input_images_or_features`
 - Input name: `vit_output`
-- Optional input names: `output_height`, `output_width` (only when dynamic)
+- Optional input names: `output_height`, `output_width` (only when dynamic), `score_threshold` (when `--score-threshold-as-input` is used)
 - Output name: `aligned_features`
 
 ### Metadata written to ONNX
@@ -414,7 +426,7 @@ The script adds descriptions to ONNX metadata for:
 - `input_images_or_features`
 - `vit_output`
 - `vit_box_format`
-- `use_score_threshold` (`score_threshold` is added when enabled)
+- `use_score_threshold`, `score_threshold_as_input` (`score_threshold` is added when enabled)
 - `aligned`
 - `aligned_features`
 - `output_height` (only when fixed output height is used)
@@ -463,4 +475,10 @@ python 03_dynamic_roi_align_vit.py --onnx-output-path out/roi_align_vit.onnx
 
 ```bash
 python 03_dynamic_roi_align_vit.py --use-score-threshold 0.250
+```
+
+7. Expose score threshold as runtime ONNX input:
+
+```bash
+python 03_dynamic_roi_align_vit.py --score-threshold-as-input
 ```
