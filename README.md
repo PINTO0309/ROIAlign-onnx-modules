@@ -5,16 +5,17 @@ Various implementations of DynamicRoIAlign. This provides an effective component
 
 | Variant | Summary | Jump |
 | --- | --- | --- |
-| `01_dynamic_roi_align.py` | Basic DynamicRoIAlign export (`rois` is a direct input). | [Go to Section](#variant-01) |
-| `02_dynamic_roi_align_yolo.py` | Integrated YOLO preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-02) |
-| `03_dynamic_roi_align_vit.py` | Integrated ViT output preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-03) |
-| `04_merge_yolo_dynamic_roi_align.py` | Merge YOLO detector ONNX and DynamicRoIAlign-YOLO ONNX. | [Go to Section](#variant-04) |
-| `05_merge_vit_dynamic_roi_align.py` | Merge ViT detector ONNX and DynamicRoIAlign-ViT ONNX. | [Go to Section](#variant-05) |
+| `01_dynamic_roi_align.py` | Basic DynamicRoIAlign export (`rois` is a direct input). | [Go to Section](#01_dynamic_roi_alignpy-usage) |
+| `02_dynamic_roi_align_yolo.py` | Integrated YOLO preprocessing + DynamicRoIAlign export. | [Go to Section](#02_dynamic_roi_align_yolopy-usage) |
+| `03_dynamic_roi_align_vit.py` | Integrated ViT output preprocessing + DynamicRoIAlign export. | [Go to Section](#03_dynamic_roi_align_vitpy-usage) |
+| `04_merge_yolo_dynamic_roi_align.py` | Merge YOLO detector ONNX and DynamicRoIAlign-YOLO ONNX. | [Go to Section](#04_merge_yolo_dynamic_roi_alignpy-usage) |
+| `05_merge_vit_dynamic_roi_align.py` | Merge ViT detector ONNX and DynamicRoIAlign-ViT ONNX. | [Go to Section](#05_merge_vit_dynamic_roi_alignpy-usage) |
 
 A sample generated ONNX file can be found [here (./sample)](./sample).
 
-<a id="variant-01"></a>
 ## 01_dynamic_roi_align.py Usage
+
+<details><summary>Click to expand</summary>
 
 `01_dynamic_roi_align.py` exports a DynamicRoIAlign model to ONNX, runs `onnxsim`, and writes metadata into the exported model.
 
@@ -147,8 +148,11 @@ python 01_dynamic_roi_align.py --aligned
 python 01_dynamic_roi_align.py --onnx-output-path out/dynamic_roi_align.onnx
 ```
 
-<a id="variant-02"></a>
+</details>
+
 ## 02_dynamic_roi_align_yolo.py Usage
+
+<details><summary>Click to expand</summary>
 
 `02_dynamic_roi_align_yolo.py` exports an integrated ONNX model that includes:
 
@@ -521,8 +525,11 @@ foot:20:24 \
 - Class-id shape per output: `[B, K_group]`.
 - Candidate-index shape per output: `[B, K_group]` (index over original YOLO candidate axis `N`).
 
-<a id="variant-03"></a>
+</details>
+
 ## 03_dynamic_roi_align_vit.py Usage
+
+<details><summary>Click to expand</summary>
 
 `03_dynamic_roi_align_vit.py` exports an integrated ONNX model that includes:
 
@@ -908,8 +915,11 @@ foot:20:24 \
 - Class-id shape per output: `[B, K_group]`.
 - Query-index shape per output: `[B, K_group]` (index over original ViT query axis `Q`).
 
-<a id="variant-04"></a>
+</details>
+
 ## 04_merge_yolo_dynamic_roi_align.py Usage
+
+<details><summary>Click to expand</summary>
 
 `04_merge_yolo_dynamic_roi_align.py` merges:
 
@@ -966,8 +976,11 @@ python 04_merge_yolo_dynamic_roi_align.py \
   [--model-name MODEL_NAME]
 ```
 
-<a id="variant-05"></a>
+</details>
+
 ## 05_merge_vit_dynamic_roi_align.py Usage
+
+<details><summary>Click to expand</summary>
 
 `05_merge_vit_dynamic_roi_align.py` merges:
 
@@ -1022,3 +1035,5 @@ python 05_merge_vit_dynamic_roi_align.py \
   [--prefix-roi-align PREFIX_ROI_ALIGN] \
   [--model-name MODEL_NAME]
 ```
+
+</details>
