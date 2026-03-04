@@ -928,6 +928,8 @@ foot:20:24 \
 
 The script connects detector output to the DynamicRoIAlign `yolo_output` input, keeps the detector final output as a graph output in the merged model, and appends filtered detector outputs using `yolo_candidate_indices*`.
 
+[Here](https://github.com/PINTO0309/ROIAlign-onnx-modules/releases) is a sample ONNX file that merges DynamicROIAlign with YOLO.
+
 ### Basic run
 
 - Single-class
@@ -988,6 +990,8 @@ python 04_merge_yolo_dynamic_roi_align.py \
 2. DynamicRoIAlign-ViT ONNX (for example, `dynamic_roi_align_vit_1class.onnx`)
 
 The script connects detector output to the DynamicRoIAlign `vit_output` input, keeps the detector final output as a graph output in the merged model, and appends filtered detector outputs using `vit_query_indices*`.
+
+[Here](https://github.com/PINTO0309/ROIAlign-onnx-modules/releases) is a sample ONNX file that merges DynamicROIAlign with ViT.
 
 ### Basic run
 
