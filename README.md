@@ -8,6 +8,8 @@ Various implementations of DynamicRoIAlign. This provides an effective component
 | `01_dynamic_roi_align.py` | Basic DynamicRoIAlign export (`rois` is a direct input). | [Go to Section](#variant-01) |
 | `02_dynamic_roi_align_yolo.py` | Integrated YOLO preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-02) |
 | `03_dynamic_roi_align_vit.py` | Integrated ViT output preprocessing + DynamicRoIAlign export. | [Go to Section](#variant-03) |
+| `04_merge_yolo_dynamic_roi_align.py` | Merge YOLO detector ONNX and DynamicRoIAlign-YOLO ONNX. | [Go to Section](#variant-04) |
+| `05_merge_vit_dynamic_roi_align.py` | Merge ViT detector ONNX and DynamicRoIAlign-ViT ONNX. | [Go to Section](#variant-05) |
 
 A sample generated ONNX file can be found [here (./sample)](./sample).
 
@@ -905,3 +907,118 @@ foot:20:24 \
 - Feature shape per output: `[B, K_group, C, 128, 64]` (`B` and `C` can remain dynamic when not fixed by CLI).
 - Class-id shape per output: `[B, K_group]`.
 - Query-index shape per output: `[B, K_group]` (index over original ViT query axis `Q`).
+
+<a id="variant-04"></a>
+## 04_merge_yolo_dynamic_roi_align.py Usage
+
+`04_merge_yolo_dynamic_roi_align.py` merges:
+
+1. YOLO detector ONNX (for example, `yolov9_t_wholebody25_1x3x480x640.onnx`)
+2. DynamicRoIAlign-YOLO ONNX (for example, `dynamic_roi_align_yolo_1class.onnx`)
+
+The script connects detector output to the DynamicRoIAlign `yolo_output` input, keeps the detector final output as a graph output in the merged model, and appends filtered detector outputs using `yolo_candidate_indices*`.
+
+### Basic run
+
+- Single-class
+  ```bash
+  python 04_merge_yolo_dynamic_roi_align.py \
+  --detector-onnx-path yolov9_t_wholebody25_1x3x480x640.onnx \
+  --roi-align-onnx-path dynamic_roi_align_yolo_1class.onnx \
+  --output-onnx-path yolov9_t_wholebody25_1x3x480x640_dra_1class.onnx
+  ```
+
+- Multi-group + Multi-classes
+  ```bash
+  python 04_merge_yolo_dynamic_roi_align.py \
+  --detector-onnx-path yolov9_t_wholebody25_1x3x480x640.onnx \
+  --roi-align-onnx-path dynamic_roi_align_yolo_n-groups_n-classes.onnx \
+  --output-onnx-path yolov9_t_wholebody25_1x3x480x640_dra_n-class.onnx
+  ```
+
+Default behavior:
+
+- Detector final output (default: last graph output, e.g. `output0`) is preserved in merged graph outputs.
+- `yolo_output` connection is auto-inferred when available.
+- `--share-image-input` is enabled by default, so detector image input and DynamicRoIAlign image input are unified into one input.
+- The merged graph is simplified with `onnxsim` before final save.
+- `yolo_candidate_indices*` outputs are detected automatically, and filtered detector outputs are appended to graph outputs.
+- `yolo_candidate_indices*` themselves are used internally and removed from final graph outputs.
+- Single-index output case (`yolo_candidate_indices`): appends `yolo_output_filtered` with shape `[B, S, K]` (candidate-axis filtering only).
+- Grouped-index output case (`yolo_candidate_indices_g{idx}_{group}`): appends `yolo_output_filtered_g{idx}_{group}` with shape `[B, 4 + C_group, K_group]`, where `C_group` is the number of labels in that group (`topk_groups` metadata).
+- Grouped outputs are class-aware on channel axis: channel order is `[box(4), class(label_0), class(label_1), ...]` mapped from original YOLO channels `[4 + label]`.
+- If shape axes can be resolved statically from source model shapes, static `dim_value` is written. Unresolved axes remain dynamic.
+
+### CLI options
+
+```text
+python 04_merge_yolo_dynamic_roi_align.py \
+  --detector-onnx-path DETECTOR_ONNX_PATH \
+  --roi-align-onnx-path ROI_ALIGN_ONNX_PATH \
+  [--output-onnx-path OUTPUT_ONNX_PATH] \
+  [--detector-output-name DETECTOR_OUTPUT_NAME] \
+  [--roi-yolo-input-name ROI_YOLO_INPUT_NAME] \
+  [--detector-image-input-name DETECTOR_IMAGE_INPUT_NAME] \
+  [--roi-image-input-name ROI_IMAGE_INPUT_NAME] \
+  [--share-image-input | --no-share-image-input] \
+  [--prefix-detector PREFIX_DETECTOR] \
+  [--prefix-roi-align PREFIX_ROI_ALIGN] \
+  [--model-name MODEL_NAME]
+```
+
+<a id="variant-05"></a>
+## 05_merge_vit_dynamic_roi_align.py Usage
+
+`05_merge_vit_dynamic_roi_align.py` merges:
+
+1. ViT detector ONNX
+2. DynamicRoIAlign-ViT ONNX (for example, `dynamic_roi_align_vit_1class.onnx`)
+
+The script connects detector output to the DynamicRoIAlign `vit_output` input, keeps the detector final output as a graph output in the merged model, and appends filtered detector outputs using `vit_query_indices*`.
+
+### Basic run
+
+- Single-class
+  ```bash
+  python 05_merge_vit_dynamic_roi_align.py \
+  --detector-onnx-path vit_detector.onnx \
+  --roi-align-onnx-path dynamic_roi_align_vit_1class.onnx \
+  --output-onnx-path vit_detector_dra_1class.onnx
+  ```
+
+- Multi-group + Multi-classes
+  ```bash
+  python 05_merge_vit_dynamic_roi_align.py \
+  --detector-onnx-path vit_detector.onnx \
+  --roi-align-onnx-path dynamic_roi_align_vit_n-groups_n-classes.onnx \
+  --output-onnx-path vit_detector_dra_n-class.onnx
+  ```
+
+Default behavior:
+
+- Detector final output (default: last graph output, e.g. `output0`) is preserved in merged graph outputs.
+- `vit_output` connection is auto-inferred when available.
+- `--share-image-input` is enabled by default, so detector image input and DynamicRoIAlign image input are unified into one input.
+- The merged graph is simplified with `onnxsim` before final save.
+- `vit_query_indices*` outputs are detected automatically, and filtered detector outputs are appended to graph outputs.
+- `vit_query_indices*` themselves are used internally and removed from final graph outputs.
+- Single-index output case (`vit_query_indices`): appends `vit_output_filtered` with shape `[B, K, F]`.
+- Grouped-index output case (`vit_query_indices_g{idx}_{group}`): appends `vit_output_filtered_g{idx}_{group}` with shape `[B, K_group, F]`.
+- If shape axes can be resolved statically from source model shapes, static `dim_value` is written. Unresolved axes remain dynamic.
+
+### CLI options
+
+```text
+python 05_merge_vit_dynamic_roi_align.py \
+  --detector-onnx-path DETECTOR_ONNX_PATH \
+  --roi-align-onnx-path ROI_ALIGN_ONNX_PATH \
+  [--output-onnx-path OUTPUT_ONNX_PATH] \
+  [--detector-output-name DETECTOR_OUTPUT_NAME] \
+  [--roi-vit-input-name ROI_VIT_INPUT_NAME] \
+  [--detector-image-input-name DETECTOR_IMAGE_INPUT_NAME] \
+  [--roi-image-input-name ROI_IMAGE_INPUT_NAME] \
+  [--share-image-input | --no-share-image-input] \
+  [--prefix-detector PREFIX_DETECTOR] \
+  [--prefix-roi-align PREFIX_ROI_ALIGN] \
+  [--model-name MODEL_NAME]
+```
