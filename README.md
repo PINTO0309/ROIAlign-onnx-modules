@@ -271,6 +271,7 @@ When `--topk-group-output-sizes` is used together with `--use-topk-group`:
 1. ROIAlign output is exported per group as separate outputs.
 2. One `H,W` token applies the same ROI size to all groups.
 3. Multiple `H,W` tokens must match the number of groups in order.
+4. Each grouped ROI feature output is flattened as `[num_rois, C, H, W]`, where `num_rois = B * K_group`.
 
 When score filtering is enabled (`--use-score-threshold` or `--score-threshold-as-input`):
 
@@ -485,8 +486,8 @@ head:20:7,8,9,10,11,12,13,14,15 \
 - Group definition: `body` (`K=40`) and `head` (`K=20`), each with multi-class candidate scoring.
 - Score path: each group computes per-candidate class max (`ReduceMax`) then applies `TopK`.
 - ROI outputs:
-- `aligned_features_g0_body`: `[1, 40, 3, 128, 64]`
-- `aligned_features_g1_head`: `[1, 20, 3, 32, 32]`
+- `aligned_features_g0_body`: `[40, 3, 128, 64]` (`B=1` case)
+- `aligned_features_g1_head`: `[20, 3, 32, 32]` (`B=1` case)
 - Class-id outputs:
 - `class_ids_g0_body`: `[1, 40]`
 - `class_ids_g1_head`: `[1, 20]`
@@ -654,6 +655,7 @@ When `--topk-group-output-sizes` is used together with `--use-topk-group`:
 1. ROIAlign output is exported per group as separate outputs.
 2. One `H,W` token applies the same ROI size to all groups.
 3. Multiple `H,W` tokens must match the number of groups in order.
+4. Each grouped ROI feature output is flattened as `[num_rois, C, H, W]`, where `num_rois = B * K_group`.
 
 When score filtering is enabled (`--use-score-threshold` or `--score-threshold-as-input`):
 
@@ -875,8 +877,8 @@ head:20:7,8,9,10,11,12,13,14,15 \
 - Group definition: `body` (`K=40`) and `head` (`K=20`), each with multi-label query filtering.
 - Score path: each group applies label-mask over queries then runs `TopK` on score field `field[5]`.
 - ROI outputs:
-- `aligned_features_g0_body`: `[1, 40, 3, 128, 64]`
-- `aligned_features_g1_head`: `[1, 20, 3, 32, 32]`
+- `aligned_features_g0_body`: `[40, 3, 128, 64]` (`B=1` case)
+- `aligned_features_g1_head`: `[20, 3, 32, 32]` (`B=1` case)
 - Class-id outputs:
 - `class_ids_g0_body`: `[1, 40]`
 - `class_ids_g1_head`: `[1, 20]`

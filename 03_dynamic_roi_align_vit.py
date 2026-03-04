@@ -390,7 +390,6 @@ class DynamicRoIAlignFromVit(torch.nn.Module):
                     return_indices=self.enable_output_indices,
                 ),
             )
-            batch_size = vit_output.shape[0]
             grouped_features: list[torch.Tensor] = []
             for rois_group, (group_h, group_w) in zip(grouped_rois, runtime_topk_group_output_sizes):
                 group_aligned_features = typing.cast(
@@ -402,16 +401,7 @@ class DynamicRoIAlignFromVit(torch.nn.Module):
                         group_w,
                     ),
                 )
-                channels = group_aligned_features.shape[1]
-                grouped_features.append(
-                    group_aligned_features.reshape(
-                        batch_size,
-                        rois_group.shape[1],
-                        channels,
-                        group_aligned_features.shape[2],
-                        group_aligned_features.shape[3],
-                    )
-                )
+                grouped_features.append(group_aligned_features)
             grouped_outputs: list[torch.Tensor] = list(grouped_features)
             if self.enable_output_classids:
                 grouped_outputs.extend(grouped_class_ids)
@@ -853,7 +843,8 @@ if __name__ == "__main__":
     if grouped_output_sizes_enabled:
         if args.vit_batch_size is None:
             for feature_output_name in feature_output_names:
-                dynamic_axes[feature_output_name][0] = "vit_batch_size"
+                dynamic_axes[feature_output_name][0] = "num_rois"
+        if args.vit_batch_size is None:
             for class_ids_name in class_ids_output_names:
                 dynamic_axes[class_ids_name][0] = "vit_batch_size"
             for query_indices_name in vit_query_indices_output_names:
@@ -861,7 +852,7 @@ if __name__ == "__main__":
         if args.input_channels is None:
             dynamic_axes["input_images_or_features"][1] = "channels"
             for feature_output_name in feature_output_names:
-                dynamic_axes[feature_output_name][2] = "channels"
+                dynamic_axes[feature_output_name][1] = "channels"
     elif output_is_flattened:
         # Output: [num_rois, C, H, W]
         dynamic_axes[onnx_output_name][0] = "num_rois"
@@ -1015,7 +1006,7 @@ if __name__ == "__main__":
         raise RuntimeError("onnxsim validation failed")
 
     # Preserve symbolic dimensions where requested.
-    output_channel_axis = 2 if grouped_output_sizes_enabled else (1 if output_is_flattened else 2)
+    output_channel_axis = 1 if grouped_output_sizes_enabled else (1 if output_is_flattened else 2)
     if args.input_batch_size is None:
         _set_input_dim_param(simplified_model, "input_images_or_features", 0, "batch_size")
     if args.input_channels is None:
@@ -1036,8 +1027,12 @@ if __name__ == "__main__":
         _set_input_dim_param(simplified_model, "vit_output", 2, "vit_output_fields")
     if grouped_output_sizes_enabled:
         if args.vit_batch_size is None:
-            for output_name in output_names:
-                _set_output_dim_param(simplified_model, output_name, 0, "vit_batch_size")
+            for feature_output_name in feature_output_names:
+                _set_output_dim_param(simplified_model, feature_output_name, 0, "num_rois")
+            for class_ids_name in class_ids_output_names:
+                _set_output_dim_param(simplified_model, class_ids_name, 0, "vit_batch_size")
+            for query_indices_name in vit_query_indices_output_names:
+                _set_output_dim_param(simplified_model, query_indices_name, 0, "vit_batch_size")
     elif output_is_flattened:
         _set_output_dim_param(simplified_model, onnx_output_name, 0, "num_rois")
         if args.enable_output_classids:
@@ -1148,7 +1143,8 @@ if __name__ == "__main__":
         for group_index, (group_name, group_topk, _) in enumerate(typed_topk_groups):
             out_h, out_w = typed_group_sizes[group_index]
             model_metadata[feature_output_names[group_index]] = (
-                f"Aligned ROI features for group '{group_name}' shape: [B, K, C, {out_h}, {out_w}]\n"
+                f"Aligned ROI features for group '{group_name}' shape: [num_rois, C, {out_h}, {out_w}]\n"
+                "num_rois: B * K for this group\n"
                 f"K: top-K for group '{group_name}' (current export value: {group_topk})"
             )
             if args.enable_output_classids:
